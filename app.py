@@ -1,13 +1,17 @@
 # =====================================================================
-# MastiWatch - Mastitis Early-Warning Dashboard (Streamlit)
+# MASTIWATCH
+# AI-BASED EARLY FORECASTING OF BOVINE MASTITIS
 # Team Med Sphere | PSNA College of Engineering and Technology
 #
-# Files needed in the SAME folder:
-#     app.py, mastitis_model.pkl, mastitis_features.csv
+# Required files:
+#   app.py
+#   mastitis_model.pkl
+#   mastitis_features.csv
+#
 # Run:
-#     pip install -r requirements.txt
-#     streamlit run app.py
+#   streamlit run app.py
 # =====================================================================
+
 from pathlib import Path
 
 import joblib
@@ -15,435 +19,2545 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from sklearn.metrics import (confusion_matrix, precision_recall_curve,
-                             roc_auc_score, roc_curve)
+
+from sklearn.metrics import (
+    confusion_matrix,
+    precision_recall_curve,
+    roc_auc_score,
+    roc_curve,
+)
+
+# ---------------------------------------------------------------------
+# PATH
+# ---------------------------------------------------------------------
 
 BASE = Path(__file__).parent
 
-# Streamlit renamed use_container_width -> width="stretch"; support both.
-import streamlit as _st
-try:
-    from packaging.version import Version
-    STRETCH = {"width": "stretch"} if Version(_st.__version__) >= Version("1.50") else {"use_container_width": True}
-except Exception:
-    STRETCH = {"use_container_width": True}
-st.set_page_config(page_title="MastiWatch | Mastitis Early Warning",
-                   page_icon="🐄", layout="wide")
+# ---------------------------------------------------------------------
+# PAGE CONFIG
+# ---------------------------------------------------------------------
 
-# ------------------------------------------------------------------ colours
-RED, ORANGE, GREEN, BLUE = "#d62728", "#ff9f1c", "#2ca02c", "#1f77b4"
-BAND_COLOUR = {"HIGH": RED, "MEDIUM": ORANGE, "LOW": GREEN}
-BAND_ICON = {"HIGH": "🔴", "MEDIUM": "🟠", "LOW": "🟢"}
+st.set_page_config(
+    page_title="MastiWatch | AI Mastitis Early Warning",
+    page_icon="🐄",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-# ------------------------------------------------------------------ text (EN / TA)
-TEXT = {
-    "English": {
-        "title": "🐄 MastiWatch: Mastitis Early-Warning System",
-        "sub": "AI forecasting of bovine mastitis 3-5 days before symptoms appear",
-        "lang": "Language / மொழி",
-        "settings": "Settings",
-        "day": "Select day",
-        "breed": "Breed filter",
-        "all": "All breeds",
-        "thr": "Alert thresholds",
-        "thr_high": "HIGH risk from",
-        "thr_med": "MEDIUM risk from",
-        "tabs": ["🏠 Herd overview", "🐄 Cow detail", "🧪 What-if simulator",
-                 "📊 Model performance", "ℹ️ About"],
-        "herd": "Herd risk overview",
-        "cows": "Cows", "high": "HIGH risk", "med": "MEDIUM risk", "low": "LOW risk",
-        "dist": "Risk level split", "bybreed": "Average risk by breed",
-        "table": "Cows ranked by risk",
-        "download": "⬇️ Download alert list (CSV)",
-        "top_n": "Rows to show",
-        "pick": "Select cow",
-        "risk": "Mastitis risk (next 5 days)",
-        "why": "Why is this cow flagged?",
-        "why_help": "Red bars push risk UP, green bars push risk DOWN (XGBoost feature contributions).",
-        "trend": "Trends for this cow",
-        "prob": "Risk over time",
-        "profile": "Cow profile",
-        "actions": {
-            "HIGH": "Do a CMT test today, check milking hygiene, isolate milk, and call the vet.",
-            "MEDIUM": "Monitor closely, re-check milk tomorrow, and keep the udder clean.",
-            "LOW": "Routine care. Continue regular milking hygiene.",
-        },
-        "no_data": "No data for this cow on or before the selected day.",
-        "whatif": "What-if simulator",
-        "whatif_help": "Change the readings of the selected cow and see how the risk responds.",
-        "whatif_cow": "Starting from cow",
-        "reset": "Original risk", "new": "Simulated risk",
-        "perf": "Model performance on the demo dataset",
-        "perf_note": ("The model file was trained on this same simulated dataset, so the numbers below "
-                      "are optimistic. The held-out results reported in the project deck are "
-                      "ROC-AUC 0.96, recall 75%, precision 0.33 and about 4 days of early warning."),
-        "reported": "Reported in project deck (held-out test)",
-        "this_data": "Computed on the demo dataset (in-sample)",
-        "lead": "Average early-warning lead time (days)",
-        "importance": "Most important features",
-        "note": "Demo uses simulated data based on published ranges. Retrain on real farm data for deployment.",
-        "about_h": "About MastiWatch",
-    },
-    "தமிழ்": {
-        "title": "🐄 MastiWatch: மடிவீக்க நோய் முன்னெச்சரிக்கை அமைப்பு",
-        "sub": "அறிகுறிகள் தெரிவதற்கு 3-5 நாட்களுக்கு முன்பே AI எச்சரிக்கை",
-        "lang": "Language / மொழி",
-        "settings": "அமைப்புகள்",
-        "day": "நாளைத் தேர்ந்தெடுக்கவும்",
-        "breed": "இனம் வடிகட்டி",
-        "all": "அனைத்து இனங்கள்",
-        "thr": "எச்சரிக்கை எல்லைகள்",
-        "thr_high": "அதிக ஆபத்து தொடக்கம்",
-        "thr_med": "நடுத்தர ஆபத்து தொடக்கம்",
-        "tabs": ["🏠 மந்தை மேலோட்டம்", "🐄 மாட்டின் விவரம்", "🧪 என்ன நடந்தால்?",
-                 "📊 மாதிரி செயல்திறன்", "ℹ️ பற்றி"],
-        "herd": "மந்தை ஆபத்து நிலை",
-        "cows": "மாடுகள்", "high": "அதிக ஆபத்து", "med": "நடுத்தர ஆபத்து", "low": "குறைந்த ஆபத்து",
-        "dist": "ஆபத்து நிலை பகிர்வு", "bybreed": "இனம் வாரியாக சராசரி ஆபத்து",
-        "table": "ஆபத்து அடிப்படையில் மாடுகள்",
-        "download": "⬇️ எச்சரிக்கைப் பட்டியல் (CSV)",
-        "top_n": "காட்ட வேண்டிய வரிசைகள்",
-        "pick": "மாட்டைத் தேர்ந்தெடுக்கவும்",
-        "risk": "மடிவீக்க ஆபத்து (அடுத்த 5 நாட்கள்)",
-        "why": "இந்த மாடு ஏன் எச்சரிக்கப்பட்டது?",
-        "why_help": "சிவப்பு பட்டை ஆபத்தை உயர்த்தும், பச்சை பட்டை குறைக்கும்.",
-        "trend": "இந்த மாட்டின் போக்கு",
-        "prob": "காலப்போக்கில் ஆபத்து",
-        "profile": "மாட்டின் சுயவிவரம்",
-        "actions": {
-            "HIGH": "இன்றே CMT சோதனை செய்யுங்கள், சுத்தத்தைச் சரிபார்த்து, கால்நடை மருத்துவரை அழைக்கவும்.",
-            "MEDIUM": "கவனமாகக் கண்காணித்து, நாளை மீண்டும் பால் சோதிக்கவும்.",
-            "LOW": "வழக்கமான பராமரிப்பைத் தொடரவும்.",
-        },
-        "no_data": "தேர்ந்தெடுத்த நாளுக்கு முன் இந்த மாட்டிற்குத் தரவு இல்லை.",
-        "whatif": "என்ன நடந்தால்? சிமுலேட்டர்",
-        "whatif_help": "மாட்டின் அளவீடுகளை மாற்றி ஆபத்து எப்படி மாறுகிறது என்று பாருங்கள்.",
-        "whatif_cow": "தொடங்கும் மாடு",
-        "reset": "அசல் ஆபத்து", "new": "சிமுலேட் ஆபத்து",
-        "perf": "டெமோ தரவில் மாதிரி செயல்திறன்",
-        "perf_note": ("மாதிரி இதே உருவகப்படுத்தப்பட்ட தரவில் பயிற்சி பெற்றது; எனவே இங்குள்ள எண்கள் அதிகமாகத் தெரியும். "
-                      "திட்ட விளக்கக்காட்சியில் ROC-AUC 0.96, recall 75%, precision 0.33, சுமார் 4 நாள் முன்னெச்சரிக்கை."),
-        "reported": "திட்ட அறிக்கையில் (சோதனைத் தரவு)",
-        "this_data": "டெமோ தரவில் கணக்கிடப்பட்டது",
-        "lead": "சராசரி முன்னெச்சரிக்கை நாட்கள்",
-        "importance": "முக்கிய காரணிகள்",
-        "note": "இது உருவகப்படுத்தப்பட்ட தரவு. உண்மையான பண்ணை தரவில் மீண்டும் பயிற்சி அளிக்க வேண்டும்.",
-        "about_h": "MastiWatch பற்றி",
-    },
+# ---------------------------------------------------------------------
+# CUSTOM CSS
+# ---------------------------------------------------------------------
+
+st.markdown(
+    """
+    <style>
+
+    /* =========================================================
+       GLOBAL
+       ========================================================= */
+
+    .stApp {
+        background:
+            linear-gradient(
+                180deg,
+                #f7fbf8 0%,
+                #ffffff 40%,
+                #f7faf8 100%
+            );
+    }
+
+    .main .block-container {
+        padding-top: 1.5rem;
+        padding-bottom: 3rem;
+        max-width: 1450px;
+    }
+
+    h1, h2, h3 {
+        font-family: "Inter", "Segoe UI", sans-serif;
+        color: #173b2b;
+    }
+
+    p, div, span, label {
+        font-family: "Inter", "Segoe UI", sans-serif;
+    }
+
+    /* =========================================================
+       SIDEBAR
+       ========================================================= */
+
+    section[data-testid="stSidebar"] {
+        background:
+            linear-gradient(
+                180deg,
+                #0f5132 0%,
+                #164f36 50%,
+                #0b3d27 100%
+            );
+    }
+
+    section[data-testid="stSidebar"] * {
+        color: white !important;
+    }
+
+    section[data-testid="stSidebar"] .stSelectbox div,
+    section[data-testid="stSidebar"] .stSlider div {
+        color: #173b2b !important;
+    }
+
+    /* =========================================================
+       BRAND HEADER
+       ========================================================= */
+
+    .brand-header {
+        background:
+            linear-gradient(
+                135deg,
+                #0f5132 0%,
+                #18794e 55%,
+                #239b66 100%
+            );
+
+        padding: 28px 32px;
+        border-radius: 20px;
+        color: white;
+
+        box-shadow:
+            0 10px 30px rgba(15, 81, 50, 0.18);
+
+        margin-bottom: 25px;
+    }
+
+    .brand-title {
+        font-size: 34px;
+        font-weight: 800;
+        letter-spacing: -1px;
+        margin-bottom: 4px;
+    }
+
+    .brand-subtitle {
+        font-size: 15px;
+        opacity: 0.92;
+        margin-top: 5px;
+    }
+
+    .brand-badge {
+        display: inline-block;
+        background: rgba(255,255,255,0.15);
+        border: 1px solid rgba(255,255,255,0.25);
+        padding: 6px 12px;
+        border-radius: 30px;
+        font-size: 12px;
+        margin-top: 14px;
+    }
+
+    /* =========================================================
+       DASHBOARD CARDS
+       ========================================================= */
+
+    .metric-card {
+        background: white;
+        padding: 20px;
+        border-radius: 16px;
+
+        border: 1px solid #e5eee8;
+
+        box-shadow:
+            0 5px 18px rgba(18, 66, 42, 0.06);
+
+        min-height: 125px;
+    }
+
+    .metric-label {
+        font-size: 13px;
+        color: #718078;
+        font-weight: 600;
+        margin-bottom: 7px;
+    }
+
+    .metric-value {
+        font-size: 31px;
+        font-weight: 800;
+        color: #173b2b;
+    }
+
+    .metric-small {
+        font-size: 12px;
+        color: #829088;
+        margin-top: 4px;
+    }
+
+    .metric-high {
+        border-left: 5px solid #dc3545;
+    }
+
+    .metric-medium {
+        border-left: 5px solid #f39c12;
+    }
+
+    .metric-low {
+        border-left: 5px solid #28a745;
+    }
+
+    .metric-total {
+        border-left: 5px solid #18794e;
+    }
+
+    /* =========================================================
+       SECTION HEADERS
+       ========================================================= */
+
+    .section-title {
+        font-size: 22px;
+        font-weight: 750;
+        color: #173b2b;
+        margin-top: 15px;
+        margin-bottom: 4px;
+    }
+
+    .section-description {
+        color: #718078;
+        font-size: 13px;
+        margin-bottom: 18px;
+    }
+
+    /* =========================================================
+       RISK BADGES
+       ========================================================= */
+
+    .risk-high {
+        display: inline-block;
+        background: #fff0f1;
+        color: #c62828;
+        border: 1px solid #ffc7cb;
+        padding: 7px 15px;
+        border-radius: 30px;
+        font-weight: 800;
+        font-size: 13px;
+    }
+
+    .risk-medium {
+        display: inline-block;
+        background: #fff8e8;
+        color: #b86b00;
+        border: 1px solid #ffe0a3;
+        padding: 7px 15px;
+        border-radius: 30px;
+        font-weight: 800;
+        font-size: 13px;
+    }
+
+    .risk-low {
+        display: inline-block;
+        background: #edf9f0;
+        color: #218838;
+        border: 1px solid #bde7c7;
+        padding: 7px 15px;
+        border-radius: 30px;
+        font-weight: 800;
+        font-size: 13px;
+    }
+
+    /* =========================================================
+       COW PROFILE
+       ========================================================= */
+
+    .cow-profile {
+        background: white;
+        border: 1px solid #e5eee8;
+        border-radius: 18px;
+        padding: 22px;
+        box-shadow: 0 5px 18px rgba(18, 66, 42, 0.05);
+    }
+
+    .cow-id {
+        font-size: 25px;
+        font-weight: 800;
+        color: #173b2b;
+    }
+
+    .profile-item {
+        margin-top: 9px;
+        color: #5d6c63;
+        font-size: 14px;
+    }
+
+    .profile-item strong {
+        color: #173b2b;
+    }
+
+    /* =========================================================
+       INFO CARDS
+       ========================================================= */
+
+    .info-box {
+        background: #f2f8f4;
+        border: 1px solid #d8eade;
+        border-radius: 14px;
+        padding: 16px 18px;
+        margin-top: 10px;
+        color: #345344;
+    }
+
+    .warning-box {
+        background: #fff8e9;
+        border: 1px solid #f5dda6;
+        border-radius: 14px;
+        padding: 16px 18px;
+        color: #745317;
+    }
+
+    .danger-box {
+        background: #fff1f2;
+        border: 1px solid #f4c5c9;
+        border-radius: 14px;
+        padding: 16px 18px;
+        color: #8d2831;
+    }
+
+    /* =========================================================
+       FOOTER
+       ========================================================= */
+
+    .footer {
+        margin-top: 45px;
+        padding: 25px;
+        text-align: center;
+
+        border-top: 1px solid #e1ebe5;
+
+        color: #75837b;
+        font-size: 12px;
+    }
+
+    /* =========================================================
+       TABS
+       ========================================================= */
+
+    button[data-baseweb="tab"] {
+        font-weight: 650;
+    }
+
+    /* =========================================================
+       DATAFRAME
+       ========================================================= */
+
+    [data-testid="stDataFrame"] {
+        border-radius: 12px;
+        overflow: hidden;
+    }
+
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# ---------------------------------------------------------------------
+# COLORS
+# ---------------------------------------------------------------------
+
+RED = "#dc3545"
+ORANGE = "#f39c12"
+GREEN = "#28a745"
+BLUE = "#18794e"
+DARK_GREEN = "#0f5132"
+
+BAND_COLOUR = {
+    "HIGH": RED,
+    "MEDIUM": ORANGE,
+    "LOW": GREEN,
 }
 
+BAND_ICON = {
+    "HIGH": "🔴",
+    "MEDIUM": "🟠",
+    "LOW": "🟢",
+}
+
+# ---------------------------------------------------------------------
+# TEXT
+# ---------------------------------------------------------------------
+
+TEXT = {
+
+    "English": {
+
+        "title": "MastiWatch",
+        "subtitle":
+            "AI-powered early warning system for bovine mastitis",
+
+        "description":
+            "Forecast mastitis risk before visible symptoms appear "
+            "using routinely recorded farm data.",
+
+        "language": "Language / மொழி",
+
+        "settings": "Dashboard Settings",
+
+        "day": "Monitoring Day",
+        "breed": "Breed Filter",
+        "all": "All Breeds",
+
+        "thresholds": "Risk Thresholds",
+        "high_threshold": "High risk from",
+        "medium_threshold": "Medium risk from",
+
+        "tabs": [
+            "🏠 Herd Dashboard",
+            "🐄 Cow Intelligence",
+            "🧪 What-If Simulator",
+            "📊 AI Performance",
+            "ℹ️ About"
+        ],
+
+        "herd_title": "Herd Risk Intelligence",
+        "herd_description":
+            "Real-time overview of mastitis risk across the monitored herd.",
+
+        "total": "Total Cows",
+        "high": "High Risk",
+        "medium": "Medium Risk",
+        "low": "Low Risk",
+
+        "distribution": "Risk Distribution",
+        "breed_risk": "Average Risk by Breed",
+
+        "risk_table": "Priority Cow List",
+
+        "rows": "Cows to display",
+
+        "download": "⬇️ Download Alert Report",
+
+        "select_cow": "Select Cow",
+
+        "risk_title": "Mastitis Risk — Next 5 Days",
+
+        "why": "Why is this cow flagged?",
+
+        "why_description":
+            "Feature contributions show which measurements increase "
+            "or decrease the predicted risk.",
+
+        "trend": "Cow Health Trends",
+
+        "risk_trend": "Risk Trend",
+
+        "profile": "Cow Profile",
+
+        "what_if": "What-If Risk Simulator",
+
+        "what_if_description":
+            "Change selected health indicators and instantly observe "
+            "how predicted risk responds.",
+
+        "original": "Original Risk",
+        "simulated": "Simulated Risk",
+
+        "performance":
+            "Model Performance",
+
+        "about": "About MastiWatch",
+
+        "no_data":
+            "No measurement is available for this cow on the selected day.",
+
+        "actions": {
+
+            "HIGH":
+                "Immediate veterinary attention is recommended. "
+                "Perform CMT testing, review milking hygiene, "
+                "and follow farm veterinary protocols.",
+
+            "MEDIUM":
+                "Monitor this cow closely. Repeat relevant milk "
+                "measurements and maintain strict udder hygiene.",
+
+            "LOW":
+                "Continue routine monitoring and standard milking hygiene.",
+
+        },
+
+        "demo_note":
+            "⚠️ Research prototype: current model results are based "
+            "on simulated/demo data and require validation on real "
+            "farm records before clinical or field deployment.",
+    },
+
+    "தமிழ்": {
+
+        "title": "MastiWatch",
+
+        "subtitle":
+            "மாடுகளில் மடிவீக்க நோயை முன்கூட்டியே கண்டறியும் AI அமைப்பு",
+
+        "description":
+            "வெளிப்படையான அறிகுறிகள் தோன்றுவதற்கு முன்பே "
+            "மடிவீக்க நோய் ஆபத்தை கணிக்கிறது.",
+
+        "language": "Language / மொழி",
+
+        "settings": "அமைப்புகள்",
+
+        "day": "கண்காணிப்பு நாள்",
+        "breed": "இன வடிகட்டி",
+        "all": "அனைத்து இனங்கள்",
+
+        "thresholds": "ஆபத்து எல்லைகள்",
+        "high_threshold": "அதிக ஆபத்து தொடக்கம்",
+        "medium_threshold": "நடுத்தர ஆபத்து தொடக்கம்",
+
+        "tabs": [
+            "🏠 மந்தை மேலோட்டம்",
+            "🐄 மாடு விவரம்",
+            "🧪 என்ன நடந்தால்?",
+            "📊 AI செயல்திறன்",
+            "ℹ️ MastiWatch பற்றி"
+        ],
+
+        "herd_title": "மந்தை ஆபத்து நிலை",
+
+        "herd_description":
+            "மந்தையில் உள்ள மாடுகளின் மடிவீக்க ஆபத்தை ஒரே இடத்தில் கண்காணிக்கவும்.",
+
+        "total": "மொத்த மாடுகள்",
+        "high": "அதிக ஆபத்து",
+        "medium": "நடுத்தர ஆபத்து",
+        "low": "குறைந்த ஆபத்து",
+
+        "distribution": "ஆபத்து பகிர்வு",
+        "breed_risk": "இனம் வாரியான சராசரி ஆபத்து",
+
+        "risk_table": "முக்கிய கவனம் தேவைப்படும் மாடுகள்",
+
+        "rows": "காட்ட வேண்டிய மாடுகள்",
+
+        "download": "⬇️ எச்சரிக்கை அறிக்கையை பதிவிறக்கவும்",
+
+        "select_cow": "மாட்டை தேர்ந்தெடுக்கவும்",
+
+        "risk_title": "அடுத்த 5 நாட்களுக்கான மடிவீக்க ஆபத்து",
+
+        "why": "இந்த மாடு ஏன் எச்சரிக்கப்பட்டது?",
+
+        "why_description":
+            "எந்த அளவீடுகள் ஆபத்தை அதிகரிக்கின்றன அல்லது குறைக்கின்றன என்பதை பார்க்கலாம்.",
+
+        "trend": "மாட்டின் உடல்நிலை போக்குகள்",
+
+        "risk_trend": "ஆபத்து போக்கு",
+
+        "profile": "மாட்டின் விவரம்",
+
+        "what_if": "What-If ஆபத்து சிமுலேட்டர்",
+
+        "what_if_description":
+            "மாட்டின் அளவீடுகளை மாற்றி ஆபத்து எப்படி மாறுகிறது என்பதைப் பாருங்கள்.",
+
+        "original": "அசல் ஆபத்து",
+        "simulated": "சிமுலேட் ஆபத்து",
+
+        "performance": "மாதிரி செயல்திறன்",
+
+        "about": "MastiWatch பற்றி",
+
+        "no_data":
+            "தேர்ந்தெடுத்த நாளில் இந்த மாட்டிற்கான தரவு இல்லை.",
+
+        "actions": {
+
+            "HIGH":
+                "உடனடி கால்நடை மருத்துவ பரிசோதனை பரிந்துரைக்கப்படுகிறது. "
+                "CMT பரிசோதனை மற்றும் சுகாதார நிலையை சரிபார்க்கவும்.",
+
+            "MEDIUM":
+                "இந்த மாட்டை கவனமாக கண்காணிக்கவும். "
+                "தேவையான பால் அளவீடுகளை மீண்டும் பரிசோதிக்கவும்.",
+
+            "LOW":
+                "வழக்கமான கண்காணிப்பு மற்றும் சுத்தமான பால் கறக்கும் முறையை தொடரவும்.",
+
+        },
+
+        "demo_note":
+            "⚠️ இது ஒரு ஆராய்ச்சி prototype. தற்போதைய முடிவுகள் simulated/demo "
+            "data அடிப்படையிலானவை; உண்மையான farm data மூலம் validation தேவை.",
+    }
+}
+
+# ---------------------------------------------------------------------
+# FEATURE NAMES
+# ---------------------------------------------------------------------
+
 NICE = {
-    "scc_ma3": "Somatic cell count (3-day avg)", "scc_ma7": "Somatic cell count (7-day avg)",
-    "scc_log": "Somatic cell count (log)", "scc_dev": "SCC vs cow's own normal",
-    "scc_chg3": "SCC change (3 days)", "conductivity": "Milk conductivity",
-    "conductivity_ma3": "Conductivity (3-day avg)", "conductivity_ma7": "Conductivity (7-day avg)",
-    "conductivity_dev": "Conductivity vs cow's normal", "conductivity_chg3": "Conductivity change (3 days)",
-    "yield_l": "Milk yield", "yield_l_ma3": "Yield (3-day avg)", "yield_l_ma7": "Yield (7-day avg)",
-    "yield_l_dev": "Yield vs cow's normal", "yield_l_chg3": "Yield change (3 days)",
-    "body_temp": "Body temperature", "body_temp_ma3": "Body temp (3-day avg)",
-    "body_temp_ma7": "Body temp (7-day avg)", "body_temp_dev": "Body temp vs normal",
-    "body_temp_chg3": "Body temp change", "hand_milking": "Hand milking", "hygiene": "Hygiene score",
-    "parity": "Number of calvings", "humidity": "Humidity", "thi": "Heat stress (THI)",
-    "thi_ma3": "Heat stress (3-day avg)", "temp": "Air temperature", "dim": "Days in milk",
+
+    "scc_ma3": "SCC — 3 Day Average",
+    "scc_ma7": "SCC — 7 Day Average",
+    "scc_log": "SCC — Log",
+    "scc_dev": "SCC vs Cow Normal",
+    "scc_chg3": "SCC Change",
+
+    "conductivity": "Milk Conductivity",
+    "conductivity_ma3": "Conductivity — 3 Day Avg",
+    "conductivity_ma7": "Conductivity — 7 Day Avg",
+    "conductivity_dev": "Conductivity vs Normal",
+    "conductivity_chg3": "Conductivity Change",
+
+    "yield_l": "Milk Yield",
+    "yield_l_ma3": "Milk Yield — 3 Day Avg",
+    "yield_l_ma7": "Milk Yield — 7 Day Avg",
+    "yield_l_dev": "Yield vs Normal",
+    "yield_l_chg3": "Yield Change",
+
+    "body_temp": "Body Temperature",
+    "body_temp_ma3": "Body Temperature — 3 Day Avg",
+    "body_temp_ma7": "Body Temperature — 7 Day Avg",
+    "body_temp_dev": "Body Temperature vs Normal",
+    "body_temp_chg3": "Body Temperature Change",
+
+    "hand_milking": "Hand Milking",
+    "hygiene": "Hygiene Score",
+    "parity": "Number of Calvings",
+    "humidity": "Humidity",
+    "thi": "Heat Stress — THI",
+    "thi_ma3": "Heat Stress — 3 Day Avg",
+    "temp": "Air Temperature",
+    "dim": "Days in Milk",
     "breed_code": "Breed",
 }
 
-# ------------------------------------------------------------------ data / model
+# ---------------------------------------------------------------------
+# LOAD MODEL
+# ---------------------------------------------------------------------
+
 @st.cache_resource
 def load_model():
-    bundle = joblib.load(BASE / "mastitis_model.pkl")
+
+    bundle = joblib.load(
+        BASE / "mastitis_model.pkl"
+    )
+
     return bundle["model"], bundle["features"]
 
 
+# ---------------------------------------------------------------------
+# LOAD DATA
+# ---------------------------------------------------------------------
+
 @st.cache_data
 def load_scored_data():
-    """Read the CSV once and score every row with the model."""
-    model, feats = load_model()
-    df = pd.read_csv(BASE / "mastitis_features.csv")
-    df["risk"] = model.predict_proba(df[feats])[:, 1]
+
+    model, features = load_model()
+
+    df = pd.read_csv(
+        BASE / "mastitis_features.csv"
+    )
+
+    df["risk"] = model.predict_proba(
+        df[features]
+    )[:, 1]
+
     return df
 
 
-def band(p, high, med):
-    return "HIGH" if p >= high else "MEDIUM" if p >= med else "LOW"
+# ---------------------------------------------------------------------
+# RISK BAND
+# ---------------------------------------------------------------------
+
+def get_band(probability, high, medium):
+
+    if probability >= high:
+        return "HIGH"
+
+    if probability >= medium:
+        return "MEDIUM"
+
+    return "LOW"
 
 
-def contributions(model, feats, row_df):
-    """Signed per-feature contributions (log-odds) for one row, via XGBoost."""
+# ---------------------------------------------------------------------
+# XGBOOST CONTRIBUTIONS
+# ---------------------------------------------------------------------
+
+def get_contributions(model, features, row):
+
     try:
+
         import xgboost as xgb
-        d = xgb.DMatrix(row_df[feats])
-        c = model.get_booster().predict(d, pred_contribs=True)[0][:-1]
-        return pd.Series(c, index=feats)
+
+        matrix = xgb.DMatrix(
+            row[features]
+        )
+
+        values = model.get_booster().predict(
+            matrix,
+            pred_contribs=True
+        )[0][:-1]
+
+        return pd.Series(
+            values,
+            index=features
+        )
+
     except Exception:
+
         return None
 
 
-def lead_time(df, thr):
-    """For cows that became sick: days between first alert (inside the 5-day window) and onset."""
-    out = []
-    for _, g in df[df["onset_day"] >= 0].groupby("cow_id"):
-        onset = g["onset_day"].iloc[0]
-        pre = g[(g["day"] < onset) & (g["day"] >= onset - 5) & (g["risk"] >= thr)]
-        if len(pre):
-            out.append(onset - pre["day"].min())
-    return float(np.mean(out)) if out else float("nan"), len(out)
+# ---------------------------------------------------------------------
+# GAUGE
+# ---------------------------------------------------------------------
+
+def create_gauge(probability, high, medium):
+
+    figure = go.Figure(
+        go.Indicator(
+            mode="gauge+number",
+            value=probability * 100,
+
+            number={
+                "suffix": "%",
+                "font": {
+                    "size": 38,
+                    "color": DARK_GREEN
+                }
+            },
+
+            gauge={
+                "axis": {
+                    "range": [0, 100],
+                    "tickwidth": 1
+                },
+
+                "bar": {
+                    "color": DARK_GREEN,
+                    "thickness": 0.25
+                },
+
+                "steps": [
+
+                    {
+                        "range": [
+                            0,
+                            medium * 100
+                        ],
+                        "color": "#e7f6ea"
+                    },
+
+                    {
+                        "range": [
+                            medium * 100,
+                            high * 100
+                        ],
+                        "color": "#fff1d7"
+                    },
+
+                    {
+                        "range": [
+                            high * 100,
+                            100
+                        ],
+                        "color": "#ffe4e7"
+                    }
+                ]
+            }
+        )
+    )
+
+    figure.update_layout(
+        height=250,
+        margin=dict(
+            l=10,
+            r=10,
+            t=15,
+            b=5
+        )
+    )
+
+    return figure
 
 
-# ------------------------------------------------------------------ chart helpers
-def gauge(p, high, med):
-    return go.Figure(go.Indicator(
-        mode="gauge+number", value=p * 100, number={"suffix": " %"},
-        gauge={"axis": {"range": [0, 100]}, "bar": {"color": "#333"},
-               "steps": [{"range": [0, med * 100], "color": "#c8e6c9"},
-                         {"range": [med * 100, high * 100], "color": "#ffe0b2"},
-                         {"range": [high * 100, 100], "color": "#ffcdd2"}]},
-    )).update_layout(height=230, margin=dict(l=10, r=10, t=10, b=0))
+# ---------------------------------------------------------------------
+# LINE CHART
+# ---------------------------------------------------------------------
+
+def create_line_chart(
+    dataframe,
+    column,
+    title,
+    color,
+    selected_day=None
+):
+
+    figure = go.Figure()
+
+    figure.add_trace(
+        go.Scatter(
+            x=dataframe["day"],
+            y=dataframe[column],
+            mode="lines+markers",
+
+            line={
+                "color": color,
+                "width": 3
+            },
+
+            marker={
+                "size": 6
+            }
+        )
+    )
+
+    if selected_day is not None:
+
+        figure.add_vline(
+            x=selected_day,
+            line_dash="dot",
+            line_color="#888888"
+        )
+
+    figure.update_layout(
+
+        title={
+            "text": title,
+            "font": {
+                "size": 15
+            }
+        },
+
+        height=300,
+
+        margin=dict(
+            l=20,
+            r=20,
+            t=50,
+            b=20
+        ),
+
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+
+        xaxis={
+            "title": "Day",
+            "gridcolor": "#edf2ef"
+        },
+
+        yaxis={
+            "gridcolor": "#edf2ef"
+        },
+
+        hovermode="x unified"
+    )
+
+    return figure
 
 
-def line(df, y, title, colour=BLUE, hlines=None, day=None, yfmt=None):
-    f = go.Figure(go.Scatter(x=df["day"], y=df[y], mode="lines+markers", line=dict(color=colour)))
-    for val, col, txt in (hlines or []):
-        f.add_hline(y=val, line_dash="dash", line_color=col, annotation_text=txt)
-    if day is not None:
-        f.add_vline(x=day, line_dash="dot", line_color="grey")
-    f.update_layout(title=title, height=270, margin=dict(l=10, r=10, t=40, b=10),
-                    xaxis_title="Day", yaxis_tickformat=yfmt)
-    return f
+# ---------------------------------------------------------------------
+# LEAD TIME
+# ---------------------------------------------------------------------
+
+def calculate_lead_time(df, threshold):
+
+    results = []
+
+    if "onset_day" not in df.columns:
+        return float("nan")
+
+    for _, group in df[
+        df["onset_day"] >= 0
+    ].groupby("cow_id"):
+
+        onset = group["onset_day"].iloc[0]
+
+        before = group[
+            (group["day"] < onset)
+            &
+            (group["day"] >= onset - 5)
+            &
+            (group["risk"] >= threshold)
+        ]
+
+        if len(before):
+
+            results.append(
+                onset - before["day"].min()
+            )
+
+    if not results:
+        return float("nan")
+
+    return float(
+        np.mean(results)
+    )
 
 
-# ================================================================== APP
-lang = st.sidebar.radio("Language / மொழி", list(TEXT))
+# =====================================================================
+# SIDEBAR
+# =====================================================================
+
+lang = st.sidebar.radio(
+    "🌐 Language / மொழி",
+    ["English", "தமிழ்"]
+)
+
 T = TEXT[lang]
 
+st.sidebar.markdown(
+    """
+    <div style="
+        padding:15px;
+        border-radius:14px;
+        background:rgba(255,255,255,0.10);
+        margin-bottom:20px;
+        text-align:center;
+    ">
+        <div style="font-size:36px;">🐄</div>
+        <div style="font-size:20px;font-weight:800;">
+            MastiWatch
+        </div>
+        <div style="font-size:11px;opacity:0.8;">
+            AI Mastitis Early Warning
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
 model, FEATURES = load_model()
+
 DF = load_scored_data()
 
-st.sidebar.header(T["settings"])
-days = sorted(DF["day"].unique())
-day = st.sidebar.select_slider(T["day"], options=days, value=days[len(days) // 2])
-breeds = [T["all"]] + sorted(DF["breed"].unique())
-breed_sel = st.sidebar.selectbox(T["breed"], breeds)
-st.sidebar.markdown("**" + T["thr"] + "**")
-HIGH = st.sidebar.slider(T["thr_high"], 0.30, 0.95, 0.60, 0.05)
-MED = st.sidebar.slider(T["thr_med"], 0.05, float(HIGH) - 0.05, min(0.30, HIGH - 0.05), 0.05)
-st.sidebar.info(T["note"])
+st.sidebar.header(
+    T["settings"]
+)
 
-DF["band"] = DF["risk"].apply(lambda p: band(p, HIGH, MED))
-VIEW = DF if breed_sel == T["all"] else DF[DF["breed"] == breed_sel]
+# Day
 
-st.title(T["title"])
-st.caption(T["sub"])
+days = sorted(
+    DF["day"].unique()
+)
 
-# latest reading per cow on or before the chosen day
-latest = (VIEW[VIEW["day"] <= day].sort_values("day").groupby("cow_id").tail(1))
-latest = latest[latest["day"] == day]          # only cows measured on that day
-today = latest.sort_values("risk", ascending=False)
+selected_day = st.sidebar.select_slider(
+    T["day"],
+    options=days,
+    value=days[-1]
+)
 
-tab_herd, tab_cow, tab_what, tab_perf, tab_about = st.tabs(T["tabs"])
+# Breed
 
-# ------------------------------------------------------------------ TAB 1: herd
+breeds = [
+    T["all"]
+] + sorted(
+    DF["breed"].unique()
+)
+
+selected_breed = st.sidebar.selectbox(
+    T["breed"],
+    breeds
+)
+
+# Thresholds
+
+st.sidebar.markdown(
+    f"**{T['thresholds']}**"
+)
+
+HIGH = st.sidebar.slider(
+    T["high_threshold"],
+    0.30,
+    0.95,
+    0.60,
+    0.05
+)
+
+MEDIUM = st.sidebar.slider(
+    T["medium_threshold"],
+    0.05,
+    float(HIGH) - 0.05,
+    min(0.30, HIGH - 0.05),
+    0.05
+)
+
+# Add risk band
+
+DF["band"] = DF["risk"].apply(
+    lambda x: get_band(
+        x,
+        HIGH,
+        MEDIUM
+    )
+)
+
+# Filter breed
+
+if selected_breed == T["all"]:
+
+    VIEW = DF.copy()
+
+else:
+
+    VIEW = DF[
+        DF["breed"] == selected_breed
+    ].copy()
+
+# =====================================================================
+# HEADER
+# =====================================================================
+
+st.markdown(
+    f"""
+    <div class="brand-header">
+
+        <div class="brand-title">
+            🐄 {T["title"]}
+        </div>
+
+        <div class="brand-subtitle">
+            {T["subtitle"]}
+        </div>
+
+        <div class="brand-subtitle">
+            {T["description"]}
+        </div>
+
+        <div class="brand-badge">
+            🤖 XGBoost &nbsp; • &nbsp;
+            🧠 Explainable AI &nbsp; • &nbsp;
+            📅 5-Day Forecast
+        </div>
+
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+# =====================================================================
+# CURRENT HERD DATA
+# =====================================================================
+
+latest = (
+    VIEW[
+        VIEW["day"] <= selected_day
+    ]
+    .sort_values("day")
+    .groupby("cow_id")
+    .tail(1)
+)
+
+latest = latest[
+    latest["day"] == selected_day
+]
+
+today = latest.sort_values(
+    "risk",
+    ascending=False
+)
+
+# =====================================================================
+# NAVIGATION
+# =====================================================================
+
+tabs = st.tabs(
+    T["tabs"]
+)
+
+tab_herd = tabs[0]
+tab_cow = tabs[1]
+tab_whatif = tabs[2]
+tab_perf = tabs[3]
+tab_about = tabs[4]
+
+# =====================================================================
+# TAB 1 — HERD DASHBOARD
+# =====================================================================
+
 with tab_herd:
-    st.subheader(T["herd"])
+
+    st.markdown(
+        f"""
+        <div class="section-title">
+            {T["herd_title"]}
+        </div>
+
+        <div class="section-description">
+            {T["herd_description"]}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    total_cows = len(today)
+
+    high_count = int(
+        (today["band"] == "HIGH").sum()
+    )
+
+    medium_count = int(
+        (today["band"] == "MEDIUM").sum()
+    )
+
+    low_count = int(
+        (today["band"] == "LOW").sum()
+    )
+
+    # -------------------------------------------------------------
+    # METRIC CARDS
+    # -------------------------------------------------------------
+
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("🐄 " + T["cows"], len(today))
-    c2.metric("🔴 " + T["high"], int((today.band == "HIGH").sum()))
-    c3.metric("🟠 " + T["med"], int((today.band == "MEDIUM").sum()))
-    c4.metric("🟢 " + T["low"], int((today.band == "LOW").sum()))
+
+    with c1:
+
+        st.markdown(
+            f"""
+            <div class="metric-card metric-total">
+
+                <div class="metric-label">
+                    🐄 {T["total"]}
+                </div>
+
+                <div class="metric-value">
+                    {total_cows}
+                </div>
+
+                <div class="metric-small">
+                    Monitored today
+                </div>
+
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    with c2:
+
+        st.markdown(
+            f"""
+            <div class="metric-card metric-high">
+
+                <div class="metric-label">
+                    🔴 {T["high"]}
+                </div>
+
+                <div class="metric-value">
+                    {high_count}
+                </div>
+
+                <div class="metric-small">
+                    Immediate attention
+                </div>
+
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    with c3:
+
+        st.markdown(
+            f"""
+            <div class="metric-card metric-medium">
+
+                <div class="metric-label">
+                    🟠 {T["medium"]}
+                </div>
+
+                <div class="metric-value">
+                    {medium_count}
+                </div>
+
+                <div class="metric-small">
+                    Close monitoring
+                </div>
+
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    with c4:
+
+        st.markdown(
+            f"""
+            <div class="metric-card metric-low">
+
+                <div class="metric-label">
+                    🟢 {T["low"]}
+                </div>
+
+                <div class="metric-value">
+                    {low_count}
+                </div>
+
+                <div class="metric-small">
+                    Routine monitoring
+                </div>
+
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    st.markdown("<br>", unsafe_allow_html=True)
 
     if today.empty:
-        st.warning(T["no_data"])
+
+        st.warning(
+            T["no_data"]
+        )
+
     else:
-        a, b = st.columns(2)
-        counts = today["band"].value_counts().reindex(["HIGH", "MEDIUM", "LOW"]).fillna(0)
-        pie = go.Figure(go.Pie(labels=counts.index, values=counts.values, hole=0.5,
-                               marker_colors=[BAND_COLOUR[k] for k in counts.index]))
-        pie.update_layout(title=T["dist"], height=300, margin=dict(l=10, r=10, t=40, b=10))
-        a.plotly_chart(pie, **STRETCH)
 
-        br = today.groupby("breed")["risk"].mean().mul(100).sort_values()
-        bar = go.Figure(go.Bar(x=br.values, y=br.index, orientation="h", marker_color=BLUE))
-        bar.update_layout(title=T["bybreed"], height=300, xaxis_title="%",
-                          margin=dict(l=10, r=10, t=40, b=10))
-        b.plotly_chart(bar, **STRETCH)
+        # ---------------------------------------------------------
+        # CHARTS
+        # ---------------------------------------------------------
 
-        st.markdown("**" + T["table"] + "**")
-        n = st.slider(T["top_n"], 5, min(50, len(today)), min(15, len(today)))
-        show = today[["cow_id", "breed", "risk", "band", "yield_l", "conductivity",
-                      "scc", "body_temp"]].head(n).copy()
-        show["band"] = show["band"].map(lambda k: f"{BAND_ICON[k]} {k}")
-        show.columns = ["Cow", "Breed", "Risk", "Level", "Yield (L)", "Conductivity",
-                        "SCC (cells/mL)", "Body temp (°C)"]
+        chart1, chart2 = st.columns(2)
+
+        with chart1:
+
+            counts = (
+                today["band"]
+                .value_counts()
+                .reindex(
+                    ["HIGH", "MEDIUM", "LOW"]
+                )
+                .fillna(0)
+            )
+
+            pie = go.Figure(
+                go.Pie(
+
+                    labels=counts.index,
+
+                    values=counts.values,
+
+                    hole=0.60,
+
+                    marker=dict(
+                        colors=[
+                            RED,
+                            ORANGE,
+                            GREEN
+                        ]
+                    ),
+
+                    textinfo="label+percent",
+
+                    hovertemplate=
+                    "<b>%{label}</b><br>"
+                    "Cows: %{value}<br>"
+                    "%{percent}"
+                    "<extra></extra>"
+                )
+            )
+
+            pie.update_layout(
+
+                title=T["distribution"],
+
+                height=330,
+
+                paper_bgcolor="white",
+
+                margin=dict(
+                    l=10,
+                    r=10,
+                    t=55,
+                    b=10
+                ),
+
+                legend=dict(
+                    orientation="h",
+                    y=-0.05
+                )
+            )
+
+            st.plotly_chart(
+                pie,
+                use_container_width=True
+            )
+
+        with chart2:
+
+            breed_risk = (
+                today
+                .groupby("breed")["risk"]
+                .mean()
+                .mul(100)
+                .sort_values()
+            )
+
+            bar = go.Figure(
+                go.Bar(
+
+                    x=breed_risk.values,
+
+                    y=breed_risk.index,
+
+                    orientation="h",
+
+                    marker=dict(
+                        color=BLUE,
+                        line=dict(
+                            width=0
+                        )
+                    ),
+
+                    hovertemplate=
+                    "<b>%{y}</b><br>"
+                    "Average risk: %{x:.1f}%"
+                    "<extra></extra>"
+                )
+            )
+
+            bar.update_layout(
+
+                title=T["breed_risk"],
+
+                height=330,
+
+                paper_bgcolor="white",
+
+                plot_bgcolor="white",
+
+                xaxis=dict(
+                    title="Risk (%)",
+                    gridcolor="#edf2ef"
+                ),
+
+                margin=dict(
+                    l=10,
+                    r=10,
+                    t=55,
+                    b=10
+                )
+            )
+
+            st.plotly_chart(
+                bar,
+                use_container_width=True
+            )
+
+        # ---------------------------------------------------------
+        # ALERT TABLE
+        # ---------------------------------------------------------
+
+        st.markdown(
+            f"""
+            <div class="section-title">
+                🚨 {T["risk_table"]}
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        maximum = min(
+            50,
+            max(5, len(today))
+        )
+
+        default_rows = min(
+            15,
+            len(today)
+        )
+
+        number_rows = st.slider(
+            T["rows"],
+            5,
+            maximum,
+            default_rows
+        )
+
+        table = today[
+            [
+                "cow_id",
+                "breed",
+                "risk",
+                "band",
+                "yield_l",
+                "conductivity",
+                "scc",
+                "body_temp",
+            ]
+        ].head(number_rows).copy()
+
+        table["Risk"] = (
+            table["risk"] * 100
+        ).round(1).astype(str) + "%"
+
+        table["Risk Level"] = (
+            table["band"]
+            .map(
+                lambda x:
+                f"{BAND_ICON[x]} {x}"
+            )
+        )
+
+        table = table[
+            [
+                "cow_id",
+                "breed",
+                "Risk",
+                "Risk Level",
+                "yield_l",
+                "conductivity",
+                "scc",
+                "body_temp",
+            ]
+        ]
+
+        table.columns = [
+            "Cow ID",
+            "Breed",
+            "Risk",
+            "Risk Level",
+            "Milk Yield (L)",
+            "Conductivity",
+            "SCC",
+            "Body Temp (°C)"
+        ]
+
         st.dataframe(
-            show.round(2), **STRETCH, hide_index=True,
-            column_config={"Risk": st.column_config.ProgressColumn(
-                "Risk", min_value=0.0, max_value=1.0, format="%.2f")})
-        st.download_button(T["download"], today.drop(columns=["band"]).to_csv(index=False).encode(),
-                           f"mastiwatch_alerts_day{day}.csv", "text/csv")
+            table,
+            use_container_width=True,
+            hide_index=True,
+            height=430
+        )
 
-# ------------------------------------------------------------------ TAB 2: cow detail
+        st.download_button(
+            label=T["download"],
+            data=today.to_csv(
+                index=False
+            ).encode("utf-8"),
+
+            file_name=
+            f"MastiWatch_Alerts_Day_{selected_day}.csv",
+
+            mime="text/csv"
+        )
+
+# =====================================================================
+# TAB 2 — COW INTELLIGENCE
+# =====================================================================
+
 with tab_cow:
-    st.subheader(T["tabs"][1])
-    cow_ids = sorted(VIEW["cow_id"].unique())
-    default = int(today.iloc[0]["cow_id"]) if len(today) else cow_ids[0]
-    cow = st.selectbox(T["pick"], cow_ids, index=cow_ids.index(default))
-    cow_df = DF[DF["cow_id"] == cow].sort_values("day")
-    now = cow_df[cow_df["day"] <= day].tail(1)
 
-    if now.empty:
-        st.warning(T["no_data"])
+    st.markdown(
+        f"""
+        <div class="section-title">
+            🐄 {T["tabs"][1]}
+        </div>
+
+        <div class="section-description">
+            Individual cow risk profile, trends and explainable AI insights.
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    cow_ids = sorted(
+        VIEW["cow_id"].unique()
+    )
+
+    if not cow_ids:
+
+        st.warning(
+            T["no_data"]
+        )
+
     else:
-        r = now.iloc[0]
-        p = float(r["risk"]); b = band(p, HIGH, MED)
-        left, right = st.columns([1, 2])
-        with left:
-            st.caption(T["risk"])
-            st.plotly_chart(gauge(p, HIGH, MED), **STRETCH)
-            st.markdown(f"### {BAND_ICON[b]} {b}")
-            (st.error if b == "HIGH" else st.warning if b == "MEDIUM" else st.success)(T["actions"][b])
-            st.markdown("**" + T["profile"] + "**")
-            st.write(f"Breed: **{r['breed']}**  |  Calvings: **{int(r['parity'])}**  |  "
-                     f"Days in milk: **{int(r['dim'])}**")
-            st.write(f"Hand milking: **{'Yes' if r['hand_milking'] else 'No'}**  |  "
-                     f"Hygiene score: **{int(r['hygiene'])}/5**")
-        with right:
-            st.markdown("**" + T["why"] + "**")
-            st.caption(T["why_help"])
-            c = contributions(model, FEATURES, now)
-            if c is not None:
-                top = c.reindex(c.abs().sort_values(ascending=False).index).head(8)[::-1]
-                fig = go.Figure(go.Bar(
-                    x=top.values, y=[NICE.get(f, f) for f in top.index], orientation="h",
-                    marker_color=[RED if v > 0 else GREEN for v in top.values]))
-                fig.update_layout(height=340, margin=dict(l=10, r=10, t=10, b=10),
-                                  xaxis_title="Effect on risk (log-odds)")
-                st.plotly_chart(fig, **STRETCH)
+
+        default_cow = (
+            int(today.iloc[0]["cow_id"])
+            if len(today)
+            else cow_ids[0]
+        )
+
+        selected_cow = st.selectbox(
+            T["select_cow"],
+            cow_ids,
+            index=cow_ids.index(
+                default_cow
+            )
+        )
+
+        cow_df = (
+            DF[
+                DF["cow_id"] == selected_cow
+            ]
+            .sort_values("day")
+        )
+
+        current = (
+            cow_df[
+                cow_df["day"] <= selected_day
+            ]
+            .tail(1)
+        )
+
+        if current.empty:
+
+            st.warning(
+                T["no_data"]
+            )
+
+        else:
+
+            row = current.iloc[0]
+
+            probability = float(
+                row["risk"]
+            )
+
+            risk_band = get_band(
+                probability,
+                HIGH,
+                MEDIUM
+            )
+
+            left, right = st.columns(
+                [1, 1.7]
+            )
+
+            # -----------------------------------------------------
+            # LEFT
+            # -----------------------------------------------------
+
+            with left:
+
+                st.markdown(
+                    f"""
+                    <div class="cow-profile">
+
+                        <div class="cow-id">
+                            🐄 Cow {selected_cow}
+                        </div>
+
+                        <div class="profile-item">
+                            <strong>Breed:</strong>
+                            {row["breed"]}
+                        </div>
+
+                        <div class="profile-item">
+                            <strong>Calvings:</strong>
+                            {int(row["parity"])}
+                        </div>
+
+                        <div class="profile-item">
+                            <strong>Days in milk:</strong>
+                            {int(row["dim"])}
+                        </div>
+
+                        <div class="profile-item">
+                            <strong>Hygiene score:</strong>
+                            {int(row["hygiene"])}/5
+                        </div>
+
+                        <div class="profile-item">
+                            <strong>Hand milking:</strong>
+                            {"Yes" if row["hand_milking"] else "No"}
+                        </div>
+
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+                st.markdown(
+                    f"### {T['risk_title']}"
+                )
+
+                st.plotly_chart(
+                    create_gauge(
+                        probability,
+                        HIGH,
+                        MEDIUM
+                    ),
+                    use_container_width=True
+                )
+
+                badge_class = {
+                    "HIGH": "risk-high",
+                    "MEDIUM": "risk-medium",
+                    "LOW": "risk-low"
+                }[risk_band]
+
+                st.markdown(
+                    f"""
+                    <div style="text-align:center;">
+                        <span class="{badge_class}">
+                            {BAND_ICON[risk_band]}
+                            {risk_band}
+                        </span>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+                if risk_band == "HIGH":
+
+                    st.markdown(
+                        f"""
+                        <div class="danger-box">
+                            <strong>⚠ Immediate Attention</strong><br><br>
+                            {T["actions"][risk_band]}
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+
+                elif risk_band == "MEDIUM":
+
+                    st.markdown(
+                        f"""
+                        <div class="warning-box">
+                            <strong>⚠ Monitor Closely</strong><br><br>
+                            {T["actions"][risk_band]}
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+
+                else:
+
+                    st.markdown(
+                        f"""
+                        <div class="info-box">
+                            <strong>✓ Routine Monitoring</strong><br><br>
+                            {T["actions"][risk_band]}
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+
+            # -----------------------------------------------------
+            # RIGHT — EXPLAINABLE AI
+            # -----------------------------------------------------
+
+            with right:
+
+                st.markdown(
+                    f"""
+                    <div class="section-title">
+                        🧠 {T["why"]}
+                    </div>
+
+                    <div class="section-description">
+                        {T["why_description"]}
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+                contributions = get_contributions(
+                    model,
+                    FEATURES,
+                    current
+                )
+
+                if contributions is not None:
+
+                    top_features = (
+                        contributions
+                        .reindex(
+                            contributions
+                            .abs()
+                            .sort_values(
+                                ascending=False
+                            )
+                            .index
+                        )
+                        .head(8)
+                        .sort_values()
+                    )
+
+                    feature_names = [
+                        NICE.get(
+                            feature,
+                            feature
+                        )
+                        for feature in
+                        top_features.index
+                    ]
+
+                    colors = [
+                        RED if value > 0
+                        else GREEN
+                        for value in
+                        top_features.values
+                    ]
+
+                    explanation = go.Figure(
+                        go.Bar(
+
+                            x=top_features.values,
+
+                            y=feature_names,
+
+                            orientation="h",
+
+                            marker_color=colors,
+
+                            hovertemplate=
+                            "<b>%{y}</b><br>"
+                            "Contribution: %{x:.3f}"
+                            "<extra></extra>"
+                        )
+                    )
+
+                    explanation.update_layout(
+
+                        height=380,
+
+                        paper_bgcolor="white",
+
+                        plot_bgcolor="white",
+
+                        margin=dict(
+                            l=10,
+                            r=10,
+                            t=15,
+                            b=15
+                        ),
+
+                        xaxis=dict(
+                            title="Contribution to Risk",
+                            gridcolor="#edf2ef"
+                        )
+                    )
+
+                    st.plotly_chart(
+                        explanation,
+                        use_container_width=True
+                    )
+
+                    st.caption(
+                        "🔴 Factors increasing risk   "
+                        "🟢 Factors reducing risk"
+                    )
+
+                else:
+
+                    st.info(
+                        "Explainable AI information is "
+                        "not available for this model."
+                    )
+
+            # -----------------------------------------------------
+            # RISK TREND
+            # -----------------------------------------------------
+
+            st.markdown(
+                f"""
+                <div class="section-title">
+                    📈 {T["trend"]}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            st.plotly_chart(
+                create_line_chart(
+                    cow_df,
+                    "risk",
+                    T["risk_trend"],
+                    RED,
+                    selected_day
+                ),
+                use_container_width=True
+            )
+
+            # -----------------------------------------------------
+            # HEALTH TRENDS
+            # -----------------------------------------------------
+
+            t1, t2 = st.columns(2)
+
+            with t1:
+
+                st.plotly_chart(
+                    create_line_chart(
+                        cow_df,
+                        "yield_l",
+                        "🥛 Milk Yield",
+                        BLUE,
+                        selected_day
+                    ),
+                    use_container_width=True
+                )
+
+            with t2:
+
+                st.plotly_chart(
+                    create_line_chart(
+                        cow_df,
+                        "conductivity",
+                        "⚡ Milk Conductivity",
+                        ORANGE,
+                        selected_day
+                    ),
+                    use_container_width=True
+                )
+
+            t3, t4 = st.columns(2)
+
+            with t3:
+
+                st.plotly_chart(
+                    create_line_chart(
+                        cow_df,
+                        "scc",
+                        "🧪 Somatic Cell Count",
+                        RED,
+                        selected_day
+                    ),
+                    use_container_width=True
+                )
+
+            with t4:
+
+                st.plotly_chart(
+                    create_line_chart(
+                        cow_df,
+                        "body_temp",
+                        "🌡 Body Temperature",
+                        GREEN,
+                        selected_day
+                    ),
+                    use_container_width=True
+                )
+
+# =====================================================================
+# TAB 3 — WHAT IF
+# =====================================================================
+
+with tab_whatif:
+
+    st.markdown(
+        f"""
+        <div class="section-title">
+            🧪 {T["what_if"]}
+        </div>
+
+        <div class="section-description">
+            {T["what_if_description"]}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    ids = sorted(
+        VIEW["cow_id"].unique()
+    )
+
+    if not ids:
+
+        st.warning(
+            T["no_data"]
+        )
+
+    else:
+
+        default_index = (
+            ids.index(
+                int(today.iloc[0]["cow_id"])
+            )
+            if len(today)
+            and int(today.iloc[0]["cow_id"]) in ids
+            else 0
+        )
+
+        whatif_cow = st.selectbox(
+            "🐄 Starting Cow",
+            ids,
+            index=default_index,
+            key="whatif_cow"
+        )
+
+        base_data = (
+            DF[
+                (DF["cow_id"] == whatif_cow)
+                &
+                (DF["day"] <= selected_day)
+            ]
+            .sort_values("day")
+            .tail(1)
+        )
+
+        if base_data.empty:
+
+            st.warning(
+                T["no_data"]
+            )
+
+        else:
+
+            base = base_data.iloc[0]
+
+            st.markdown(
+                "### 🧬 Adjust Health Indicators"
+            )
+
+            s1, s2, s3 = st.columns(3)
+
+            with s1:
+
+                scc_log = st.slider(
+                    "SCC (log scale)",
+                    8.0,
+                    15.0,
+                    float(base["scc_log"]),
+                    0.1
+                )
+
+                scc_dev = st.slider(
+                    "SCC vs Cow Normal",
+                    -1.0,
+                    10.0,
+                    float(
+                        np.clip(
+                            base["scc_dev"],
+                            -1,
+                            10
+                        )
+                    ),
+                    0.1
+                )
+
+            with s2:
+
+                conductivity = st.slider(
+                    "Milk Conductivity",
+                    3.5,
+                    7.5,
+                    float(
+                        base["conductivity"]
+                    ),
+                    0.05
+                )
+
+                conductivity_dev = st.slider(
+                    "Conductivity vs Normal",
+                    -0.5,
+                    0.8,
+                    float(
+                        np.clip(
+                            base["conductivity_dev"],
+                            -0.5,
+                            0.8
+                        )
+                    ),
+                    0.01
+                )
+
+            with s3:
+
+                yield_dev = st.slider(
+                    "Milk Yield vs Normal",
+                    -3.0,
+                    3.0,
+                    float(
+                        np.clip(
+                            base["yield_l_dev"],
+                            -3,
+                            3
+                        )
+                    ),
+                    0.1
+                )
+
+                body_temperature = st.slider(
+                    "Body Temperature",
+                    37.5,
+                    41.0,
+                    float(
+                        np.clip(
+                            base["body_temp"],
+                            37.5,
+                            41
+                        )
+                    ),
+                    0.1
+                )
+
+            s4, s5 = st.columns(2)
+
+            with s4:
+
+                hygiene = st.slider(
+                    "Hygiene Score",
+                    1,
+                    5,
+                    int(base["hygiene"])
+                )
+
+            with s5:
+
+                hand_milking = st.radio(
+                    "Hand Milking",
+                    [0, 1],
+
+                    index=int(
+                        base["hand_milking"]
+                    ),
+
+                    format_func=lambda x:
+                    "Yes" if x else "No",
+
+                    horizontal=True
+                )
+
+            # -----------------------------------------------------
+            # CREATE SIMULATED INPUT
+            # -----------------------------------------------------
+
+            simulated = base_data.copy()
+
+            simulated["scc_log"] = scc_log
+            simulated["scc_dev"] = scc_dev
+
+            simulated["conductivity"] = conductivity
+            simulated["conductivity_dev"] = conductivity_dev
+
+            simulated["yield_l_dev"] = yield_dev
+
+            simulated["body_temp"] = body_temperature
+
+            simulated["hygiene"] = hygiene
+
+            simulated["hand_milking"] = hand_milking
+
+            new_probability = float(
+                model.predict_proba(
+                    simulated[FEATURES]
+                )[:, 1][0]
+            )
+
+            original_probability = float(
+                base["risk"]
+            )
+
+            # -----------------------------------------------------
+            # RESULT
+            # -----------------------------------------------------
+
+            r1, r2, r3 = st.columns(3)
+
+            with r1:
+
+                st.metric(
+                    T["original"],
+                    f"{original_probability * 100:.1f}%"
+                )
+
+            with r2:
+
+                delta = (
+                    new_probability
+                    - original_probability
+                ) * 100
+
+                st.metric(
+                    T["simulated"],
+                    f"{new_probability * 100:.1f}%",
+                    f"{delta:+.1f} pts"
+                )
+
+            with r3:
+
+                new_band = get_band(
+                    new_probability,
+                    HIGH,
+                    MEDIUM
+                )
+
+                st.metric(
+                    "Risk Level",
+                    f"{BAND_ICON[new_band]} {new_band}"
+                )
+
+            if new_band == "HIGH":
+
+                st.error(
+                    T["actions"][new_band]
+                )
+
+            elif new_band == "MEDIUM":
+
+                st.warning(
+                    T["actions"][new_band]
+                )
+
             else:
-                st.info("Explanation not available for this model type.")
 
-        st.plotly_chart(line(cow_df, "risk", T["prob"], RED, day=day,
-                             hlines=[(HIGH, RED, "HIGH"), (MED, ORANGE, "MEDIUM")], yfmt=".0%"),
-                        **STRETCH)
-        st.markdown("**" + T["trend"] + "**")
-        t1, t2 = st.columns(2)
-        t1.plotly_chart(line(cow_df, "yield_l", "Milk yield (L)", BLUE, day=day), **STRETCH)
-        t2.plotly_chart(line(cow_df, "conductivity", "Milk conductivity (mS/cm)", ORANGE, day=day),
-                        **STRETCH)
-        t3, t4 = st.columns(2)
-        t3.plotly_chart(line(cow_df, "scc", "Somatic cell count (cells/mL)", RED, day=day),
-                        **STRETCH)
-        t4.plotly_chart(line(cow_df, "body_temp", "Body temperature (°C)", GREEN, day=day),
-                        **STRETCH)
+                st.success(
+                    T["actions"][new_band]
+                )
 
-# ------------------------------------------------------------------ TAB 3: what-if
-with tab_what:
-    st.subheader(T["whatif"])
-    st.caption(T["whatif_help"])
-    ids = sorted(VIEW["cow_id"].unique())
-    wcow = st.selectbox(T["whatif_cow"], ids,
-                        index=ids.index(int(today.iloc[0]["cow_id"])) if len(today) else 0, key="wcow")
-    base_df = DF[(DF["cow_id"] == wcow) & (DF["day"] <= day)].sort_values("day").tail(1)
-    if base_df.empty:
-        st.warning(T["no_data"])
-    else:
-        base = base_df.iloc[0]
-        s1, s2, s3 = st.columns(3)
-        scc_log = s1.slider("SCC (log scale)", 8.0, 15.0, float(base["scc_log"]), 0.1)
-        scc_dev = s1.slider("SCC vs cow's normal", -1.0, 10.0, float(np.clip(base["scc_dev"], -1, 10)), 0.1)
-        cond = s2.slider("Conductivity (mS/cm)", 3.5, 7.5, float(base["conductivity"]), 0.05)
-        cond_dev = s2.slider("Conductivity vs normal", -0.5, 0.8, float(np.clip(base["conductivity_dev"], -0.5, 0.8)), 0.01)
-        y_dev = s3.slider("Yield vs normal (L)", -3.0, 3.0, float(np.clip(base["yield_l_dev"], -3, 3)), 0.1)
-        btemp = s3.slider("Body temp (°C)", 37.5, 41.0, float(np.clip(base["body_temp"], 37.5, 41)), 0.1)
-        h1, h2 = st.columns(2)
-        hyg = h1.slider("Hygiene score", 1, 5, int(base["hygiene"]))
-        hand = h2.radio("Hand milking", [0, 1], index=int(base["hand_milking"]),
-                        format_func=lambda v: "Yes" if v else "No", horizontal=True)
+# =====================================================================
+# TAB 4 — MODEL PERFORMANCE
+# =====================================================================
 
-        new = base_df.copy()
-        new["scc_log"] = scc_log; new["scc_dev"] = scc_dev
-        new["conductivity"] = cond; new["conductivity_dev"] = cond_dev
-        new["yield_l_dev"] = y_dev; new["body_temp"] = btemp
-        new["hygiene"] = hyg; new["hand_milking"] = hand
-        new_p = float(model.predict_proba(new[FEATURES])[:, 1][0])
-        old_p = float(base["risk"])
-        m1, m2 = st.columns(2)
-        m1.metric(T["reset"], f"{old_p * 100:.0f} %")
-        m2.metric(T["new"], f"{new_p * 100:.0f} %", f"{(new_p - old_p) * 100:+.0f} pts", delta_color="inverse")
-        nb = band(new_p, HIGH, MED)
-        (st.error if nb == "HIGH" else st.warning if nb == "MEDIUM" else st.success)(
-            f"{BAND_ICON[nb]} {nb}: {T['actions'][nb]}")
-
-# ------------------------------------------------------------------ TAB 4: performance
 with tab_perf:
-    st.subheader(T["perf"])
-    st.warning(T["perf_note"])
-    y, s = DF["label"], DF["risk"]
-    pred = (s >= MED).astype(int)
-    tn, fp, fn, tp = confusion_matrix(y, pred).ravel()
-    rec = tp / (tp + fn) if tp + fn else 0
-    prec = tp / (tp + fp) if tp + fp else 0
-    lt, n_cows = lead_time(DF, MED)
 
-    r1, r2 = st.columns(2)
-    with r1:
-        st.markdown("**" + T["reported"] + "**")
-        k = st.columns(4)
-        k[0].metric("ROC-AUC", "0.96"); k[1].metric("Recall", "75%")
-        k[2].metric("Precision", "0.33"); k[3].metric("Early warning", "~4 days")
-    with r2:
-        st.markdown("**" + T["this_data"] + f"** (threshold {MED:.2f})")
-        k = st.columns(4)
-        k[0].metric("ROC-AUC", f"{roc_auc_score(y, s):.2f}"); k[1].metric("Recall", f"{rec:.0%}")
-        k[2].metric("Precision", f"{prec:.2f}"); k[3].metric(T["lead"], f"{lt:.1f}")
+    st.markdown(
+        f"""
+        <div class="section-title">
+            📊 {T["performance"]}
+        </div>
 
-    a, b = st.columns(2)
-    fpr, tpr, _ = roc_curve(y, s)
-    roc = go.Figure(go.Scatter(x=fpr, y=tpr, name="Model", line=dict(color=BLUE)))
-    roc.add_trace(go.Scatter(x=[0, 1], y=[0, 1], name="Random", line=dict(dash="dash", color="grey")))
-    roc.update_layout(title="ROC curve", height=330, xaxis_title="False positive rate",
-                      yaxis_title="True positive rate", margin=dict(l=10, r=10, t=40, b=10))
-    a.plotly_chart(roc, **STRETCH)
-    pr, rc, _ = precision_recall_curve(y, s)
-    prf = go.Figure(go.Scatter(x=rc, y=pr, line=dict(color=ORANGE)))
-    prf.update_layout(title="Precision-Recall curve", height=330, xaxis_title="Recall",
-                      yaxis_title="Precision", margin=dict(l=10, r=10, t=40, b=10))
-    b.plotly_chart(prf, **STRETCH)
+        <div class="section-description">
+            Demonstration of the model's predictive behaviour.
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
-    c, d = st.columns(2)
-    cm = go.Figure(go.Heatmap(z=[[tn, fp], [fn, tp]], x=["Pred: healthy", "Pred: at risk"],
-                              y=["Actual: healthy", "Actual: at risk"], colorscale="Blues",
-                              text=[[tn, fp], [fn, tp]], texttemplate="%{text}", showscale=False))
-    cm.update_layout(title="Confusion matrix", height=330, yaxis_autorange="reversed",
-                     margin=dict(l=10, r=10, t=40, b=10))
-    c.plotly_chart(cm, **STRETCH)
-    imp = pd.Series(model.feature_importances_, index=FEATURES).sort_values().tail(10)
-    fi = go.Figure(go.Bar(x=imp.values, y=[NICE.get(f, f) for f in imp.index], orientation="h",
-                          marker_color=BLUE))
-    fi.update_layout(title=T["importance"], height=330, margin=dict(l=10, r=10, t=40, b=10))
-    d.plotly_chart(fi, **STRETCH)
+    st.warning(
+        "⚠ The model performance shown here is based on "
+        "the project's simulated/demo dataset."
+    )
 
-# ------------------------------------------------------------------ TAB 5: about
+    y_true = DF["label"]
+
+    scores = DF["risk"]
+
+    predictions = (
+        scores >= MEDIUM
+    ).astype(int)
+
+    tn, fp, fn, tp = confusion_matrix(
+        y_true,
+        predictions
+    ).ravel()
+
+    recall = (
+        tp / (tp + fn)
+        if tp + fn
+        else 0
+    )
+
+    precision = (
+        tp / (tp + fp)
+        if tp + fp
+        else 0
+    )
+
+    auc = roc_auc_score(
+        y_true,
+        scores
+    )
+
+    lead = calculate_lead_time(
+        DF,
+        MEDIUM
+    )
+
+    # -------------------------------------------------------------
+    # METRICS
+    # -------------------------------------------------------------
+
+    p1, p2, p3, p4 = st.columns(4)
+
+    p1.metric(
+        "ROC-AUC",
+        f"{auc:.2f}"
+    )
+
+    p2.metric(
+        "Recall",
+        f"{recall:.0%}"
+    )
+
+    p3.metric(
+        "Precision",
+        f"{precision:.2f}"
+    )
+
+    p4.metric(
+        "Early Warning",
+        f"{lead:.1f} days"
+        if not np.isnan(lead)
+        else "N/A"
+    )
+
+    st.markdown("---")
+
+    # -------------------------------------------------------------
+    # ROC + PR
+    # -------------------------------------------------------------
+
+    c1, c2 = st.columns(2)
+
+    with c1:
+
+        false_positive_rate, true_positive_rate, _ = roc_curve(
+            y_true,
+            scores
+        )
+
+        roc_figure = go.Figure()
+
+        roc_figure.add_trace(
+            go.Scatter(
+                x=false_positive_rate,
+                y=true_positive_rate,
+                mode="lines",
+
+                name="MastiWatch",
+
+                line={
+                    "color": BLUE,
+                    "width": 3
+                }
+            )
+        )
+
+        roc_figure.add_trace(
+            go.Scatter(
+                x=[0, 1],
+                y=[0, 1],
+                mode="lines",
+
+                name="Random",
+
+                line={
+                    "color": "#999",
+                    "dash": "dash"
+                }
+            )
+        )
+
+        roc_figure.update_layout(
+            title="ROC Curve",
+            height=360,
+            paper_bgcolor="white",
+            plot_bgcolor="white",
+            xaxis_title="False Positive Rate",
+            yaxis_title="True Positive Rate",
+            margin=dict(
+                l=20,
+                r=20,
+                t=55,
+                b=20
+            )
+        )
+
+        st.plotly_chart(
+            roc_figure,
+            use_container_width=True
+        )
+
+    with c2:
+
+        precision_values, recall_values, _ = precision_recall_curve(
+            y_true,
+            scores
+        )
+
+        pr_figure = go.Figure()
+
+        pr_figure.add_trace(
+            go.Scatter(
+                x=recall_values,
+                y=precision_values,
+                mode="lines",
+
+                line={
+                    "color": ORANGE,
+                    "width": 3
+                },
+
+                name="MastiWatch"
+            )
+        )
+
+        pr_figure.update_layout(
+            title="Precision-Recall Curve",
+            height=360,
+            paper_bgcolor="white",
+            plot_bgcolor="white",
+            xaxis_title="Recall",
+            yaxis_title="Precision",
+            margin=dict(
+                l=20,
+                r=20,
+                t=55,
+                b=20
+            )
+        )
+
+        st.plotly_chart(
+            pr_figure,
+            use_container_width=True
+        )
+
+    # -------------------------------------------------------------
+    # CONFUSION MATRIX + FEATURE IMPORTANCE
+    # -------------------------------------------------------------
+
+    c3, c4 = st.columns(2)
+
+    with c3:
+
+        confusion = go.Figure(
+            go.Heatmap(
+
+                z=[
+                    [tn, fp],
+                    [fn, tp]
+                ],
+
+                x=[
+                    "Predicted Healthy",
+                    "Predicted At Risk"
+                ],
+
+                y=[
+                    "Actual Healthy",
+                    "Actual At Risk"
+                ],
+
+                text=[
+                    [tn, fp],
+                    [fn, tp]
+                ],
+
+                texttemplate="%{text}",
+
+                colorscale=[
+                    [0, "#e7f6ea"],
+                    [1, "#18794e"]
+                ],
+
+                showscale=False
+            )
+        )
+
+        confusion.update_layout(
+            title="Confusion Matrix",
+            height=360,
+            paper_bgcolor="white",
+            margin=dict(
+                l=20,
+                r=20,
+                t=55,
+                b=20
+            )
+        )
+
+        st.plotly_chart(
+            confusion,
+            use_container_width=True
+        )
+
+    with c4:
+
+        importance = (
+            pd.Series(
+                model.feature_importances_,
+                index=FEATURES
+            )
+            .sort_values()
+            .tail(10)
+        )
+
+        importance_chart = go.Figure(
+            go.Bar(
+
+                x=importance.values,
+
+                y=[
+                    NICE.get(
+                        x,
+                        x
+                    )
+                    for x in importance.index
+                ],
+
+                orientation="h",
+
+                marker_color=BLUE
+            )
+        )
+
+        importance_chart.update_layout(
+            title="Top Model Features",
+            height=360,
+            paper_bgcolor="white",
+            plot_bgcolor="white",
+            margin=dict(
+                l=20,
+                r=20,
+                t=55,
+                b=20
+            )
+        )
+
+        st.plotly_chart(
+            importance_chart,
+            use_container_width=True
+        )
+
+    st.markdown(
+        f"""
+        <div class="warning-box">
+
+        <strong>Research Prototype Notice</strong><br><br>
+
+        The MastiWatch prototype uses simulated data.
+        The performance metrics should not be interpreted as
+        clinical validation. Validation using real farm records
+        and veterinary collaboration is required before
+        real-world deployment.
+
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+# =====================================================================
+# TAB 5 — ABOUT
+# =====================================================================
+
 with tab_about:
-    st.subheader(T["about_h"])
-    st.markdown("""
-**MastiWatch** is a software-only AI system that turns routinely recorded farm data
-(milk yield, conductivity, somatic cell count, cow details, weather) into a **5-day
-mastitis risk score** for every cow, ranked Low / Medium / High with a suggested action.
 
-**Pipeline:** Farm data → engineered trend features (3/7-day averages, deviation from each cow's own
-baseline, 3-day change) → XGBoost classifier → explanation of each alert → dashboard.
+    st.markdown(
+        """
+        <div class="section-title">
+            🐄 About MastiWatch
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
-**Why it matters:** subclinical mastitis shows no visible signs yet quietly cuts milk yield and quality.
-Today's tests (CMT, lab SCC) are reactive, manual and costly, and cannot forecast.
+    col1, col2 = st.columns(
+        [1.4, 1]
+    )
 
-**Built for India:** heat stress (THI), breed, hand milking, hygiene score, English and Tamil.
+    with col1:
 
-**Tech stack:** Python, pandas, scikit-learn, XGBoost, Plotly, Streamlit.
+        st.markdown(
+            """
+            ### What is MastiWatch?
 
-**Team Med Sphere**: Asmiyanaseem S, Rakshita M, Sherifa Beevi N, Srirammuthiah C
-PSNA College of Engineering and Technology.
+            **MastiWatch** is a software-only AI system designed
+            for early forecasting of bovine mastitis.
 
-**Limitation:** results come from simulated data and must be validated on real farm records
-with veterinary colleges and cooperatives before deployment.
-""")
-    st.caption(T["note"])
+            Instead of waiting for visible symptoms, the system
+            analyses routinely recorded farm information such as:
+
+            - 🥛 Milk yield
+            - ⚡ Milk conductivity
+            - 🧪 Somatic cell count
+            - 🌡 Temperature
+            - 💧 Humidity
+            - 🐄 Cow characteristics
+            - 🧼 Hygiene information
+            - 🌡 Heat stress indicators
+
+            The system uses an **XGBoost machine-learning model**
+            to estimate mastitis risk and provides an
+            explainable AI view of why a cow has been flagged.
+
+            ### AI Pipeline
+
+            **Farm Data → Feature Engineering → XGBoost →
+            Risk Score → Explainable AI → Dashboard**
+
+            ### Core Technologies
+
+            **Python · Pandas · Scikit-learn · XGBoost ·
+            Plotly · Streamlit**
+            """,
+        )
+
+    with col2:
+
+        st.markdown(
+            """
+            ### 🎯 Project Goal
+
+            Detect risk early so farmers and veterinary
+            professionals can prioritise cows that need
+            attention.
+
+            ### 🌱 Expected Impact
+
+            **Less Milk Loss**
+
+            Earlier intervention may reduce production loss.
+
+            **Healthier Cows**
+
+            Risk-based monitoring can help identify
+            potentially affected cows earlier.
+
+            **Smarter Treatment**
+
+            Supports targeted veterinary attention.
+
+            **Scalable**
+
+            Software-based architecture can be adapted
+            for farms and cooperatives.
+
+            ### 🇮🇳 Built for India
+
+            The project considers:
+
+            - Heat stress
+            - Breed differences
+            - Hand milking
+            - Hygiene
+            - English / Tamil usability
+            """
+        )
+
+    st.markdown("---")
+
+    st.markdown(
+        """
+        ### 👥 Team Med Sphere
+
+        **PSNA College of Engineering and Technology**
+
+        Asmiyanaseem S  
+        Rakshita M  
+        Sherifa Beevi N  
+        Srirammuthiah C
+        """
+    )
+
+    st.markdown(
+        f"""
+        <div class="warning-box">
+
+        <strong>⚠ Important Limitation</strong><br><br>
+
+        {T["demo_note"]}
+
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+# =====================================================================
+# FOOTER
+# =====================================================================
+
+st.markdown(
+    """
+    <div class="footer">
+
+        <strong>MastiWatch</strong> · AI-Based Early Mastitis Warning System
+        <br><br>
+
+        Team Med Sphere · PSNA College of Engineering and Technology
+        <br>
+
+        Detect Early · Act Early · Protect Milk Production
+
+    </div>
+    """,
+    unsafe_allow_html=True
+)
