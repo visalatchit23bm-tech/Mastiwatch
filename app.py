@@ -1,41 +1,36 @@
-# =====================================================================
+# ============================================================
 # MASTIWATCH
-# AI-BASED EARLY FORECASTING OF BOVINE MASTITIS
-# Team Med Sphere | PSNA College of Engineering and Technology
-#
-# Required files:
-#   app.py
-#   mastitis_model.pkl
-#   mastitis_features.csv
-#
-# Run:
-#   streamlit run app.py
-# =====================================================================
+# AI-BASED BOVINE MASTITIS EARLY WARNING SYSTEM
+# Team: Med Sphere
+# PSNA College of Engineering and Technology
+# ============================================================
+
+import warnings
+warnings.filterwarnings("ignore")
 
 from pathlib import Path
 
 import joblib
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
 import streamlit as st
+import plotly.express as px
+import plotly.graph_objects as go
 
 from sklearn.metrics import (
-    confusion_matrix,
-    precision_recall_curve,
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
     roc_auc_score,
+    confusion_matrix,
     roc_curve,
+    precision_recall_curve,
 )
 
-# ---------------------------------------------------------------------
-# PATH
-# ---------------------------------------------------------------------
-
-BASE = Path(__file__).parent
-
-# ---------------------------------------------------------------------
+# ============================================================
 # PAGE CONFIG
-# ---------------------------------------------------------------------
+# ============================================================
 
 st.set_page_config(
     page_title="MastiWatch | AI Mastitis Early Warning",
@@ -44,306 +39,120 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ---------------------------------------------------------------------
+# ============================================================
+# PATHS
+# ============================================================
+
+BASE_DIR = Path(__file__).resolve().parent
+
+MODEL_PATH = BASE_DIR / "mastitis_model.pkl"
+DATA_PATH = BASE_DIR / "mastitis_features.csv"
+
+
+# ============================================================
 # CUSTOM CSS
-# ---------------------------------------------------------------------
+# ============================================================
 
 st.markdown(
     """
     <style>
 
-    /* =========================================================
-       GLOBAL
-       ========================================================= */
-
+    /* Main background */
     .stApp {
-        background:
-            linear-gradient(
-                180deg,
-                #f7fbf8 0%,
-                #ffffff 40%,
-                #f7faf8 100%
-            );
+        background: #f6faf7;
     }
 
-    .main .block-container {
-        padding-top: 1.5rem;
-        padding-bottom: 3rem;
-        max-width: 1450px;
-    }
-
-    h1, h2, h3 {
-        font-family: "Inter", "Segoe UI", sans-serif;
-        color: #173b2b;
-    }
-
-    p, div, span, label {
-        font-family: "Inter", "Segoe UI", sans-serif;
-    }
-
-    /* =========================================================
-       SIDEBAR
-       ========================================================= */
-
-    section[data-testid="stSidebar"] {
-        background:
-            linear-gradient(
-                180deg,
-                #0f5132 0%,
-                #164f36 50%,
-                #0b3d27 100%
-            );
-    }
-
-    section[data-testid="stSidebar"] * {
-        color: white !important;
-    }
-
-    section[data-testid="stSidebar"] .stSelectbox div,
-    section[data-testid="stSidebar"] .stSlider div {
-        color: #173b2b !important;
-    }
-
-    /* =========================================================
-       BRAND HEADER
-       ========================================================= */
-
-    .brand-header {
-        background:
-            linear-gradient(
-                135deg,
-                #0f5132 0%,
-                #18794e 55%,
-                #239b66 100%
-            );
-
-        padding: 28px 32px;
-        border-radius: 20px;
+    /* Header */
+    .main-header {
+        padding: 25px 30px;
+        border-radius: 18px;
+        background: linear-gradient(135deg, #14532d, #166534);
         color: white;
-
-        box-shadow:
-            0 10px 30px rgba(15, 81, 50, 0.18);
-
         margin-bottom: 25px;
+        box-shadow: 0 8px 25px rgba(0,0,0,0.10);
     }
 
-    .brand-title {
-        font-size: 34px;
+    .main-title {
+        font-size: 38px;
         font-weight: 800;
-        letter-spacing: -1px;
-        margin-bottom: 4px;
+        margin-bottom: 5px;
     }
 
-    .brand-subtitle {
-        font-size: 15px;
-        opacity: 0.92;
-        margin-top: 5px;
+    .main-subtitle {
+        font-size: 16px;
+        opacity: 0.90;
     }
 
-    .brand-badge {
-        display: inline-block;
-        background: rgba(255,255,255,0.15);
-        border: 1px solid rgba(255,255,255,0.25);
-        padding: 6px 12px;
-        border-radius: 30px;
-        font-size: 12px;
-        margin-top: 14px;
-    }
-
-    /* =========================================================
-       DASHBOARD CARDS
-       ========================================================= */
-
+    /* Cards */
     .metric-card {
         background: white;
         padding: 20px;
         border-radius: 16px;
-
-        border: 1px solid #e5eee8;
-
-        box-shadow:
-            0 5px 18px rgba(18, 66, 42, 0.06);
-
+        border: 1px solid #e5e7eb;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+        text-align: center;
         min-height: 125px;
     }
 
-    .metric-label {
-        font-size: 13px;
-        color: #718078;
+    .metric-title {
+        color: #6b7280;
+        font-size: 14px;
         font-weight: 600;
-        margin-bottom: 7px;
     }
 
     .metric-value {
-        font-size: 31px;
+        color: #14532d;
+        font-size: 30px;
         font-weight: 800;
-        color: #173b2b;
+        margin-top: 8px;
     }
-
-    .metric-small {
-        font-size: 12px;
-        color: #829088;
-        margin-top: 4px;
-    }
-
-    .metric-high {
-        border-left: 5px solid #dc3545;
-    }
-
-    .metric-medium {
-        border-left: 5px solid #f39c12;
-    }
-
-    .metric-low {
-        border-left: 5px solid #28a745;
-    }
-
-    .metric-total {
-        border-left: 5px solid #18794e;
-    }
-
-    /* =========================================================
-       SECTION HEADERS
-       ========================================================= */
-
-    .section-title {
-        font-size: 22px;
-        font-weight: 750;
-        color: #173b2b;
-        margin-top: 15px;
-        margin-bottom: 4px;
-    }
-
-    .section-description {
-        color: #718078;
-        font-size: 13px;
-        margin-bottom: 18px;
-    }
-
-    /* =========================================================
-       RISK BADGES
-       ========================================================= */
 
     .risk-high {
+        background: #fee2e2;
+        color: #991b1b;
+        padding: 7px 14px;
+        border-radius: 20px;
+        font-weight: 700;
         display: inline-block;
-        background: #fff0f1;
-        color: #c62828;
-        border: 1px solid #ffc7cb;
-        padding: 7px 15px;
-        border-radius: 30px;
-        font-weight: 800;
-        font-size: 13px;
     }
 
     .risk-medium {
+        background: #fef3c7;
+        color: #92400e;
+        padding: 7px 14px;
+        border-radius: 20px;
+        font-weight: 700;
         display: inline-block;
-        background: #fff8e8;
-        color: #b86b00;
-        border: 1px solid #ffe0a3;
-        padding: 7px 15px;
-        border-radius: 30px;
-        font-weight: 800;
-        font-size: 13px;
     }
 
     .risk-low {
+        background: #dcfce7;
+        color: #166534;
+        padding: 7px 14px;
+        border-radius: 20px;
+        font-weight: 700;
         display: inline-block;
-        background: #edf9f0;
-        color: #218838;
-        border: 1px solid #bde7c7;
-        padding: 7px 15px;
-        border-radius: 30px;
-        font-weight: 800;
-        font-size: 13px;
     }
-
-    /* =========================================================
-       COW PROFILE
-       ========================================================= */
-
-    .cow-profile {
-        background: white;
-        border: 1px solid #e5eee8;
-        border-radius: 18px;
-        padding: 22px;
-        box-shadow: 0 5px 18px rgba(18, 66, 42, 0.05);
-    }
-
-    .cow-id {
-        font-size: 25px;
-        font-weight: 800;
-        color: #173b2b;
-    }
-
-    .profile-item {
-        margin-top: 9px;
-        color: #5d6c63;
-        font-size: 14px;
-    }
-
-    .profile-item strong {
-        color: #173b2b;
-    }
-
-    /* =========================================================
-       INFO CARDS
-       ========================================================= */
 
     .info-box {
-        background: #f2f8f4;
-        border: 1px solid #d8eade;
-        border-radius: 14px;
-        padding: 16px 18px;
-        margin-top: 10px;
-        color: #345344;
+        background: white;
+        border-left: 5px solid #16a34a;
+        padding: 18px;
+        border-radius: 10px;
+        margin: 10px 0;
+        box-shadow: 0 3px 12px rgba(0,0,0,0.04);
     }
 
-    .warning-box {
-        background: #fff8e9;
-        border: 1px solid #f5dda6;
-        border-radius: 14px;
-        padding: 16px 18px;
-        color: #745317;
+    .section-title {
+        font-size: 25px;
+        font-weight: 800;
+        color: #14532d;
+        margin-top: 15px;
+        margin-bottom: 15px;
     }
 
-    .danger-box {
-        background: #fff1f2;
-        border: 1px solid #f4c5c9;
-        border-radius: 14px;
-        padding: 16px 18px;
-        color: #8d2831;
-    }
-
-    /* =========================================================
-       FOOTER
-       ========================================================= */
-
-    .footer {
-        margin-top: 45px;
-        padding: 25px;
-        text-align: center;
-
-        border-top: 1px solid #e1ebe5;
-
-        color: #75837b;
-        font-size: 12px;
-    }
-
-    /* =========================================================
-       TABS
-       ========================================================= */
-
-    button[data-baseweb="tab"] {
-        font-weight: 650;
-    }
-
-    /* =========================================================
-       DATAFRAME
-       ========================================================= */
-
-    [data-testid="stDataFrame"] {
-        border-radius: 12px;
-        overflow: hidden;
+    footer {
+        visibility: hidden;
     }
 
     </style>
@@ -351,2213 +160,1451 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ---------------------------------------------------------------------
-# COLORS
-# ---------------------------------------------------------------------
 
-RED = "#dc3545"
-ORANGE = "#f39c12"
-GREEN = "#28a745"
-BLUE = "#18794e"
-DARK_GREEN = "#0f5132"
-
-BAND_COLOUR = {
-    "HIGH": RED,
-    "MEDIUM": ORANGE,
-    "LOW": GREEN,
-}
-
-BAND_ICON = {
-    "HIGH": "🔴",
-    "MEDIUM": "🟠",
-    "LOW": "🟢",
-}
-
-# ---------------------------------------------------------------------
-# TEXT
-# ---------------------------------------------------------------------
-
-TEXT = {
-
-    "English": {
-
-        "title": "MastiWatch",
-        "subtitle":
-            "AI-powered early warning system for bovine mastitis",
-
-        "description":
-            "Forecast mastitis risk before visible symptoms appear "
-            "using routinely recorded farm data.",
-
-        "language": "Language / மொழி",
-
-        "settings": "Dashboard Settings",
-
-        "day": "Monitoring Day",
-        "breed": "Breed Filter",
-        "all": "All Breeds",
-
-        "thresholds": "Risk Thresholds",
-        "high_threshold": "High risk from",
-        "medium_threshold": "Medium risk from",
-
-        "tabs": [
-            "🏠 Herd Dashboard",
-            "🐄 Cow Intelligence",
-            "🧪 What-If Simulator",
-            "📊 AI Performance",
-            "ℹ️ About"
-        ],
-
-        "herd_title": "Herd Risk Intelligence",
-        "herd_description":
-            "Real-time overview of mastitis risk across the monitored herd.",
-
-        "total": "Total Cows",
-        "high": "High Risk",
-        "medium": "Medium Risk",
-        "low": "Low Risk",
-
-        "distribution": "Risk Distribution",
-        "breed_risk": "Average Risk by Breed",
-
-        "risk_table": "Priority Cow List",
-
-        "rows": "Cows to display",
-
-        "download": "⬇️ Download Alert Report",
-
-        "select_cow": "Select Cow",
-
-        "risk_title": "Mastitis Risk — Next 5 Days",
-
-        "why": "Why is this cow flagged?",
-
-        "why_description":
-            "Feature contributions show which measurements increase "
-            "or decrease the predicted risk.",
-
-        "trend": "Cow Health Trends",
-
-        "risk_trend": "Risk Trend",
-
-        "profile": "Cow Profile",
-
-        "what_if": "What-If Risk Simulator",
-
-        "what_if_description":
-            "Change selected health indicators and instantly observe "
-            "how predicted risk responds.",
-
-        "original": "Original Risk",
-        "simulated": "Simulated Risk",
-
-        "performance":
-            "Model Performance",
-
-        "about": "About MastiWatch",
-
-        "no_data":
-            "No measurement is available for this cow on the selected day.",
-
-        "actions": {
-
-            "HIGH":
-                "Immediate veterinary attention is recommended. "
-                "Perform CMT testing, review milking hygiene, "
-                "and follow farm veterinary protocols.",
-
-            "MEDIUM":
-                "Monitor this cow closely. Repeat relevant milk "
-                "measurements and maintain strict udder hygiene.",
-
-            "LOW":
-                "Continue routine monitoring and standard milking hygiene.",
-
-        },
-
-        "demo_note":
-            "⚠️ Research prototype: current model results are based "
-            "on simulated/demo data and require validation on real "
-            "farm records before clinical or field deployment.",
-    },
-
-    "தமிழ்": {
-
-        "title": "MastiWatch",
-
-        "subtitle":
-            "மாடுகளில் மடிவீக்க நோயை முன்கூட்டியே கண்டறியும் AI அமைப்பு",
-
-        "description":
-            "வெளிப்படையான அறிகுறிகள் தோன்றுவதற்கு முன்பே "
-            "மடிவீக்க நோய் ஆபத்தை கணிக்கிறது.",
-
-        "language": "Language / மொழி",
-
-        "settings": "அமைப்புகள்",
-
-        "day": "கண்காணிப்பு நாள்",
-        "breed": "இன வடிகட்டி",
-        "all": "அனைத்து இனங்கள்",
-
-        "thresholds": "ஆபத்து எல்லைகள்",
-        "high_threshold": "அதிக ஆபத்து தொடக்கம்",
-        "medium_threshold": "நடுத்தர ஆபத்து தொடக்கம்",
-
-        "tabs": [
-            "🏠 மந்தை மேலோட்டம்",
-            "🐄 மாடு விவரம்",
-            "🧪 என்ன நடந்தால்?",
-            "📊 AI செயல்திறன்",
-            "ℹ️ MastiWatch பற்றி"
-        ],
-
-        "herd_title": "மந்தை ஆபத்து நிலை",
-
-        "herd_description":
-            "மந்தையில் உள்ள மாடுகளின் மடிவீக்க ஆபத்தை ஒரே இடத்தில் கண்காணிக்கவும்.",
-
-        "total": "மொத்த மாடுகள்",
-        "high": "அதிக ஆபத்து",
-        "medium": "நடுத்தர ஆபத்து",
-        "low": "குறைந்த ஆபத்து",
-
-        "distribution": "ஆபத்து பகிர்வு",
-        "breed_risk": "இனம் வாரியான சராசரி ஆபத்து",
-
-        "risk_table": "முக்கிய கவனம் தேவைப்படும் மாடுகள்",
-
-        "rows": "காட்ட வேண்டிய மாடுகள்",
-
-        "download": "⬇️ எச்சரிக்கை அறிக்கையை பதிவிறக்கவும்",
-
-        "select_cow": "மாட்டை தேர்ந்தெடுக்கவும்",
-
-        "risk_title": "அடுத்த 5 நாட்களுக்கான மடிவீக்க ஆபத்து",
-
-        "why": "இந்த மாடு ஏன் எச்சரிக்கப்பட்டது?",
-
-        "why_description":
-            "எந்த அளவீடுகள் ஆபத்தை அதிகரிக்கின்றன அல்லது குறைக்கின்றன என்பதை பார்க்கலாம்.",
-
-        "trend": "மாட்டின் உடல்நிலை போக்குகள்",
-
-        "risk_trend": "ஆபத்து போக்கு",
-
-        "profile": "மாட்டின் விவரம்",
-
-        "what_if": "What-If ஆபத்து சிமுலேட்டர்",
-
-        "what_if_description":
-            "மாட்டின் அளவீடுகளை மாற்றி ஆபத்து எப்படி மாறுகிறது என்பதைப் பாருங்கள்.",
-
-        "original": "அசல் ஆபத்து",
-        "simulated": "சிமுலேட் ஆபத்து",
-
-        "performance": "மாதிரி செயல்திறன்",
-
-        "about": "MastiWatch பற்றி",
-
-        "no_data":
-            "தேர்ந்தெடுத்த நாளில் இந்த மாட்டிற்கான தரவு இல்லை.",
-
-        "actions": {
-
-            "HIGH":
-                "உடனடி கால்நடை மருத்துவ பரிசோதனை பரிந்துரைக்கப்படுகிறது. "
-                "CMT பரிசோதனை மற்றும் சுகாதார நிலையை சரிபார்க்கவும்.",
-
-            "MEDIUM":
-                "இந்த மாட்டை கவனமாக கண்காணிக்கவும். "
-                "தேவையான பால் அளவீடுகளை மீண்டும் பரிசோதிக்கவும்.",
-
-            "LOW":
-                "வழக்கமான கண்காணிப்பு மற்றும் சுத்தமான பால் கறக்கும் முறையை தொடரவும்.",
-
-        },
-
-        "demo_note":
-            "⚠️ இது ஒரு ஆராய்ச்சி prototype. தற்போதைய முடிவுகள் simulated/demo "
-            "data அடிப்படையிலானவை; உண்மையான farm data மூலம் validation தேவை.",
-    }
-}
-
-# ---------------------------------------------------------------------
-# FEATURE NAMES
-# ---------------------------------------------------------------------
-
-NICE = {
-
-    "scc_ma3": "SCC — 3 Day Average",
-    "scc_ma7": "SCC — 7 Day Average",
-    "scc_log": "SCC — Log",
-    "scc_dev": "SCC vs Cow Normal",
-    "scc_chg3": "SCC Change",
-
-    "conductivity": "Milk Conductivity",
-    "conductivity_ma3": "Conductivity — 3 Day Avg",
-    "conductivity_ma7": "Conductivity — 7 Day Avg",
-    "conductivity_dev": "Conductivity vs Normal",
-    "conductivity_chg3": "Conductivity Change",
-
-    "yield_l": "Milk Yield",
-    "yield_l_ma3": "Milk Yield — 3 Day Avg",
-    "yield_l_ma7": "Milk Yield — 7 Day Avg",
-    "yield_l_dev": "Yield vs Normal",
-    "yield_l_chg3": "Yield Change",
-
-    "body_temp": "Body Temperature",
-    "body_temp_ma3": "Body Temperature — 3 Day Avg",
-    "body_temp_ma7": "Body Temperature — 7 Day Avg",
-    "body_temp_dev": "Body Temperature vs Normal",
-    "body_temp_chg3": "Body Temperature Change",
-
-    "hand_milking": "Hand Milking",
-    "hygiene": "Hygiene Score",
-    "parity": "Number of Calvings",
-    "humidity": "Humidity",
-    "thi": "Heat Stress — THI",
-    "thi_ma3": "Heat Stress — 3 Day Avg",
-    "temp": "Air Temperature",
-    "dim": "Days in Milk",
-    "breed_code": "Breed",
-}
-
-# ---------------------------------------------------------------------
+# ============================================================
 # LOAD MODEL
-# ---------------------------------------------------------------------
+# ============================================================
 
 @st.cache_resource
 def load_model():
 
-    bundle = joblib.load(
-        BASE / "mastitis_model.pkl"
-    )
+    if not MODEL_PATH.exists():
+        st.error(
+            f"❌ Model file not found:\n\n"
+            f"`{MODEL_PATH.name}`\n\n"
+            f"Place the model file in the same folder as `app.py`."
+        )
+        st.stop()
 
-    return bundle["model"], bundle["features"]
+    try:
+        bundle = joblib.load(MODEL_PATH)
+    except Exception as e:
+        st.error(f"❌ Unable to load model: {e}")
+        st.stop()
+
+    # Expected structure:
+    # {"model": model, "features": features}
+
+    if isinstance(bundle, dict):
+
+        if "model" in bundle:
+            model = bundle["model"]
+        else:
+            st.error("❌ `mastitis_model.pkl` does not contain a `model` object.")
+            st.stop()
+
+        if "features" in bundle:
+            features = bundle["features"]
+        else:
+            st.error("❌ `mastitis_model.pkl` does not contain `features`.")
+            st.stop()
+
+    else:
+        # Fallback if only the model was saved
+        model = bundle
+
+        if hasattr(model, "feature_names_in_"):
+            features = list(model.feature_names_in_)
+        else:
+            st.error(
+                "❌ Could not determine the model feature names.\n\n"
+                "Your `.pkl` should contain `model` and `features`."
+            )
+            st.stop()
+
+    return model, list(features)
 
 
-# ---------------------------------------------------------------------
+# ============================================================
 # LOAD DATA
-# ---------------------------------------------------------------------
+# ============================================================
 
 @st.cache_data
-def load_scored_data():
+def load_data():
 
-    model, features = load_model()
+    if not DATA_PATH.exists():
+        st.error(
+            f"❌ Dataset not found:\n\n"
+            f"`{DATA_PATH.name}`\n\n"
+            f"Place the CSV file in the same folder as `app.py`."
+        )
+        st.stop()
 
-    df = pd.read_csv(
-        BASE / "mastitis_features.csv"
-    )
-
-    df["risk"] = model.predict_proba(
-        df[features]
-    )[:, 1]
+    try:
+        df = pd.read_csv(DATA_PATH)
+    except Exception as e:
+        st.error(f"❌ Unable to read dataset: {e}")
+        st.stop()
 
     return df
 
 
-# ---------------------------------------------------------------------
-# RISK BAND
-# ---------------------------------------------------------------------
+MODEL, FEATURES = load_model()
+DF = load_data()
 
-def get_band(probability, high, medium):
 
-    if probability >= high:
-        return "HIGH"
+# ============================================================
+# CHECK FEATURES
+# ============================================================
 
-    if probability >= medium:
-        return "MEDIUM"
-
-    return "LOW"
-
-
-# ---------------------------------------------------------------------
-# XGBOOST CONTRIBUTIONS
-# ---------------------------------------------------------------------
-
-def get_contributions(model, features, row):
-
-    try:
-
-        import xgboost as xgb
-
-        matrix = xgb.DMatrix(
-            row[features]
-        )
-
-        values = model.get_booster().predict(
-            matrix,
-            pred_contribs=True
-        )[0][:-1]
-
-        return pd.Series(
-            values,
-            index=features
-        )
-
-    except Exception:
-
-        return None
-
-
-# ---------------------------------------------------------------------
-# GAUGE
-# ---------------------------------------------------------------------
-
-def create_gauge(probability, high, medium):
-
-    figure = go.Figure(
-        go.Indicator(
-            mode="gauge+number",
-            value=probability * 100,
-
-            number={
-                "suffix": "%",
-                "font": {
-                    "size": 38,
-                    "color": DARK_GREEN
-                }
-            },
-
-            gauge={
-                "axis": {
-                    "range": [0, 100],
-                    "tickwidth": 1
-                },
-
-                "bar": {
-                    "color": DARK_GREEN,
-                    "thickness": 0.25
-                },
-
-                "steps": [
-
-                    {
-                        "range": [
-                            0,
-                            medium * 100
-                        ],
-                        "color": "#e7f6ea"
-                    },
-
-                    {
-                        "range": [
-                            medium * 100,
-                            high * 100
-                        ],
-                        "color": "#fff1d7"
-                    },
-
-                    {
-                        "range": [
-                            high * 100,
-                            100
-                        ],
-                        "color": "#ffe4e7"
-                    }
-                ]
-            }
-        )
-    )
-
-    figure.update_layout(
-        height=250,
-        margin=dict(
-            l=10,
-            r=10,
-            t=15,
-            b=5
-        )
-    )
-
-    return figure
-
-
-# ---------------------------------------------------------------------
-# LINE CHART
-# ---------------------------------------------------------------------
-
-def create_line_chart(
-    dataframe,
-    column,
-    title,
-    color,
-    selected_day=None
-):
-
-    figure = go.Figure()
-
-    figure.add_trace(
-        go.Scatter(
-            x=dataframe["day"],
-            y=dataframe[column],
-            mode="lines+markers",
-
-            line={
-                "color": color,
-                "width": 3
-            },
-
-            marker={
-                "size": 6
-            }
-        )
-    )
-
-    if selected_day is not None:
-
-        figure.add_vline(
-            x=selected_day,
-            line_dash="dot",
-            line_color="#888888"
-        )
-
-    figure.update_layout(
-
-        title={
-            "text": title,
-            "font": {
-                "size": 15
-            }
-        },
-
-        height=300,
-
-        margin=dict(
-            l=20,
-            r=20,
-            t=50,
-            b=20
-        ),
-
-        paper_bgcolor="white",
-        plot_bgcolor="white",
-
-        xaxis={
-            "title": "Day",
-            "gridcolor": "#edf2ef"
-        },
-
-        yaxis={
-            "gridcolor": "#edf2ef"
-        },
-
-        hovermode="x unified"
-    )
-
-    return figure
-
-
-# ---------------------------------------------------------------------
-# LEAD TIME
-# ---------------------------------------------------------------------
-
-def calculate_lead_time(df, threshold):
-
-    results = []
-
-    if "onset_day" not in df.columns:
-        return float("nan")
-
-    for _, group in df[
-        df["onset_day"] >= 0
-    ].groupby("cow_id"):
-
-        onset = group["onset_day"].iloc[0]
-
-        before = group[
-            (group["day"] < onset)
-            &
-            (group["day"] >= onset - 5)
-            &
-            (group["risk"] >= threshold)
-        ]
-
-        if len(before):
-
-            results.append(
-                onset - before["day"].min()
-            )
-
-    if not results:
-        return float("nan")
-
-    return float(
-        np.mean(results)
-    )
-
-
-# =====================================================================
-# SIDEBAR
-# =====================================================================
-
-lang = st.sidebar.radio(
-    "🌐 Language / மொழி",
-    ["English", "தமிழ்"]
-)
-
-T = TEXT[lang]
-
-st.sidebar.markdown(
-    """
-    <div style="
-        padding:15px;
-        border-radius:14px;
-        background:rgba(255,255,255,0.10);
-        margin-bottom:20px;
-        text-align:center;
-    ">
-        <div style="font-size:36px;">🐄</div>
-        <div style="font-size:20px;font-weight:800;">
-            MastiWatch
-        </div>
-        <div style="font-size:11px;opacity:0.8;">
-            AI Mastitis Early Warning
-        </div>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
-
-model, FEATURES = load_model()
-
-DF = load_scored_data()
-
-st.sidebar.header(
-    T["settings"]
-)
-
-# Day
-
-days = sorted(
-    DF["day"].unique()
-)
-
-selected_day = st.sidebar.select_slider(
-    T["day"],
-    options=days,
-    value=days[-1]
-)
-
-# Breed
-
-breeds = [
-    T["all"]
-] + sorted(
-    DF["breed"].unique()
-)
-
-selected_breed = st.sidebar.selectbox(
-    T["breed"],
-    breeds
-)
-
-# Thresholds
-
-st.sidebar.markdown(
-    f"**{T['thresholds']}**"
-)
-
-HIGH = st.sidebar.slider(
-    T["high_threshold"],
-    0.30,
-    0.95,
-    0.60,
-    0.05
-)
-
-MEDIUM = st.sidebar.slider(
-    T["medium_threshold"],
-    0.05,
-    float(HIGH) - 0.05,
-    min(0.30, HIGH - 0.05),
-    0.05
-)
-
-# Add risk band
-
-DF["band"] = DF["risk"].apply(
-    lambda x: get_band(
-        x,
-        HIGH,
-        MEDIUM
-    )
-)
-
-# Filter breed
-
-if selected_breed == T["all"]:
-
-    VIEW = DF.copy()
-
-else:
-
-    VIEW = DF[
-        DF["breed"] == selected_breed
-    ].copy()
-
-# =====================================================================
-# HEADER
-# =====================================================================
-
-st.markdown(
-    f"""
-    <div class="brand-header">
-
-        <div class="brand-title">
-            🐄 {T["title"]}
-        </div>
-
-        <div class="brand-subtitle">
-            {T["subtitle"]}
-        </div>
-
-        <div class="brand-subtitle">
-            {T["description"]}
-        </div>
-
-        <div class="brand-badge">
-            🤖 XGBoost &nbsp; • &nbsp;
-            🧠 Explainable AI &nbsp; • &nbsp;
-            📅 5-Day Forecast
-        </div>
-
-    </div>
-    """,
-    unsafe_allow_html=True
-)
-
-# =====================================================================
-# CURRENT HERD DATA
-# =====================================================================
-
-latest = (
-    VIEW[
-        VIEW["day"] <= selected_day
-    ]
-    .sort_values("day")
-    .groupby("cow_id")
-    .tail(1)
-)
-
-latest = latest[
-    latest["day"] == selected_day
+missing_features = [
+    feature for feature in FEATURES
+    if feature not in DF.columns
 ]
 
-today = latest.sort_values(
-    "risk",
-    ascending=False
-)
+if missing_features:
 
-# =====================================================================
-# NAVIGATION
-# =====================================================================
-
-tabs = st.tabs(
-    T["tabs"]
-)
-
-tab_herd = tabs[0]
-tab_cow = tabs[1]
-tab_whatif = tabs[2]
-tab_perf = tabs[3]
-tab_about = tabs[4]
-
-# =====================================================================
-# TAB 1 — HERD DASHBOARD
-# =====================================================================
-
-with tab_herd:
-
-    st.markdown(
-        f"""
-        <div class="section-title">
-            {T["herd_title"]}
-        </div>
-
-        <div class="section-description">
-            {T["herd_description"]}
-        </div>
-        """,
-        unsafe_allow_html=True
+    st.error(
+        "❌ Model features are missing from the dataset:\n\n"
+        + "\n".join([f"- {x}" for x in missing_features])
     )
 
-    total_cows = len(today)
+    st.stop()
+
+
+# ============================================================
+# PREDICT RISK
+# ============================================================
+
+@st.cache_data
+def calculate_risk(data):
+
+    temp = data.copy()
+
+    try:
+        probabilities = MODEL.predict_proba(temp[FEATURES])[:, 1]
+    except Exception as e:
+        st.error(f"❌ Prediction failed: {e}")
+        st.stop()
+
+    temp["risk"] = probabilities
+
+    return temp
+
+
+DF = calculate_risk(DF)
+
+
+# ============================================================
+# HELPER FUNCTIONS
+# ============================================================
+
+def risk_band(risk, high_threshold=0.70, medium_threshold=0.40):
+
+    if risk >= high_threshold:
+        return "High"
+
+    if risk >= medium_threshold:
+        return "Medium"
+
+    return "Low"
+
+
+def risk_class(risk, high_threshold=0.70, medium_threshold=0.40):
+
+    band = risk_band(
+        risk,
+        high_threshold,
+        medium_threshold
+    )
+
+    if band == "High":
+        return "risk-high"
+
+    if band == "Medium":
+        return "risk-medium"
+
+    return "risk-low"
+
+
+def format_risk(risk):
+
+    return f"{risk * 100:.1f}%"
+
+
+def safe_value(row, column, default="N/A"):
+
+    if column not in row.index:
+        return default
+
+    value = row[column]
+
+    if pd.isna(value):
+        return default
+
+    return value
+
+
+# ============================================================
+# HEADER
+# ============================================================
+
+st.markdown(
+    """
+    <div class="main-header">
+
+        <div class="main-title">
+            🐄 MastiWatch
+        </div>
+
+        <div class="main-subtitle">
+            AI-Based Early Warning System for Bovine Mastitis
+        </div>
+
+        <div style="margin-top:10px;font-size:14px;">
+            Intelligent herd monitoring • Risk prediction • Early intervention
+        </div>
+
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# ============================================================
+# SIDEBAR
+# ============================================================
+
+with st.sidebar:
+
+    st.markdown("## 🐄 MastiWatch")
+
+    st.caption("AI-powered bovine mastitis monitoring")
+
+    st.divider()
+
+    st.markdown("### ⚙️ Risk Settings")
+
+    high_threshold = st.slider(
+        "High-risk threshold",
+        min_value=0.50,
+        max_value=0.95,
+        value=0.70,
+        step=0.05,
+    )
+
+    medium_threshold = st.slider(
+        "Medium-risk threshold",
+        min_value=0.20,
+        max_value=0.70,
+        value=0.40,
+        step=0.05,
+    )
+
+    if medium_threshold >= high_threshold:
+        medium_threshold = high_threshold - 0.05
+
+    st.divider()
+
+    st.markdown("### 🌐 Language")
+
+    language = st.selectbox(
+        "Select language",
+        ["English", "Tamil"]
+    )
+
+    st.divider()
+
+    st.markdown("### 📊 Dataset")
+
+    st.write(f"Rows: **{len(DF):,}**")
+    st.write(f"Features: **{len(FEATURES)}**")
+
+    st.divider()
+
+    st.caption(
+        "MastiWatch is a research prototype and "
+        "should not replace veterinary diagnosis."
+    )
+
+
+# ============================================================
+# APPLY RISK BANDS
+# ============================================================
+
+DF["risk_band"] = DF["risk"].apply(
+    lambda x: risk_band(
+        x,
+        high_threshold,
+        medium_threshold
+    )
+)
+
+
+# ============================================================
+# TABS
+# ============================================================
+
+tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    [
+        "🏠 Herd Dashboard",
+        "🐄 Cow Intelligence",
+        "🧪 What-If Simulator",
+        "📈 AI Performance",
+        "ℹ️ About",
+    ]
+)
+
+
+# ============================================================
+# TAB 1 — HERD DASHBOARD
+# ============================================================
+
+with tab1:
+
+    st.markdown(
+        '<div class="section-title">Herd Risk Overview</div>',
+        unsafe_allow_html=True,
+    )
+
+    total_cows = len(DF)
 
     high_count = int(
-        (today["band"] == "HIGH").sum()
+        (DF["risk"] >= high_threshold).sum()
     )
 
     medium_count = int(
-        (today["band"] == "MEDIUM").sum()
+        (
+            (DF["risk"] >= medium_threshold)
+            &
+            (DF["risk"] < high_threshold)
+        ).sum()
     )
 
     low_count = int(
-        (today["band"] == "LOW").sum()
+        (DF["risk"] < medium_threshold).sum()
     )
 
-    # -------------------------------------------------------------
-    # METRIC CARDS
-    # -------------------------------------------------------------
+    average_risk = DF["risk"].mean()
 
     c1, c2, c3, c4 = st.columns(4)
 
     with c1:
-
         st.markdown(
             f"""
-            <div class="metric-card metric-total">
-
-                <div class="metric-label">
-                    🐄 {T["total"]}
-                </div>
-
-                <div class="metric-value">
-                    {total_cows}
-                </div>
-
-                <div class="metric-small">
-                    Monitored today
-                </div>
-
+            <div class="metric-card">
+                <div class="metric-title">Total Cows</div>
+                <div class="metric-value">{total_cows:,}</div>
             </div>
             """,
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
 
     with c2:
-
         st.markdown(
             f"""
-            <div class="metric-card metric-high">
-
-                <div class="metric-label">
-                    🔴 {T["high"]}
-                </div>
-
-                <div class="metric-value">
-                    {high_count}
-                </div>
-
-                <div class="metric-small">
-                    Immediate attention
-                </div>
-
+            <div class="metric-card">
+                <div class="metric-title">🔴 High Risk</div>
+                <div class="metric-value">{high_count}</div>
             </div>
             """,
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
 
     with c3:
-
         st.markdown(
             f"""
-            <div class="metric-card metric-medium">
-
-                <div class="metric-label">
-                    🟠 {T["medium"]}
-                </div>
-
-                <div class="metric-value">
-                    {medium_count}
-                </div>
-
-                <div class="metric-small">
-                    Close monitoring
-                </div>
-
+            <div class="metric-card">
+                <div class="metric-title">🟡 Medium Risk</div>
+                <div class="metric-value">{medium_count}</div>
             </div>
             """,
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
 
     with c4:
-
         st.markdown(
             f"""
-            <div class="metric-card metric-low">
-
-                <div class="metric-label">
-                    🟢 {T["low"]}
-                </div>
-
+            <div class="metric-card">
+                <div class="metric-title">Average Risk</div>
                 <div class="metric-value">
-                    {low_count}
+                    {average_risk * 100:.1f}%
                 </div>
-
-                <div class="metric-small">
-                    Routine monitoring
-                </div>
-
             </div>
             """,
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
 
-    st.markdown("<br>", unsafe_allow_html=True)
+    st.write("")
 
-    if today.empty:
+    # --------------------------------------------------------
+    # FILTERS
+    # --------------------------------------------------------
 
-        st.warning(
-            T["no_data"]
-        )
+    st.markdown("### 🔎 Herd Filters")
 
-    else:
+    f1, f2 = st.columns(2)
 
-        # ---------------------------------------------------------
-        # CHARTS
-        # ---------------------------------------------------------
+    with f1:
 
-        chart1, chart2 = st.columns(2)
+        if "breed_code" in DF.columns:
 
-        with chart1:
-
-            counts = (
-                today["band"]
-                .value_counts()
-                .reindex(
-                    ["HIGH", "MEDIUM", "LOW"]
-                )
-                .fillna(0)
+            breeds = sorted(
+                DF["breed_code"]
+                .dropna()
+                .unique()
+                .tolist()
             )
 
-            pie = go.Figure(
-                go.Pie(
-
-                    labels=counts.index,
-
-                    values=counts.values,
-
-                    hole=0.60,
-
-                    marker=dict(
-                        colors=[
-                            RED,
-                            ORANGE,
-                            GREEN
-                        ]
-                    ),
-
-                    textinfo="label+percent",
-
-                    hovertemplate=
-                    "<b>%{label}</b><br>"
-                    "Cows: %{value}<br>"
-                    "%{percent}"
-                    "<extra></extra>"
-                )
+            selected_breed = st.selectbox(
+                "Breed",
+                ["All"] + breeds
             )
 
-            pie.update_layout(
+        else:
+            selected_breed = "All"
 
-                title=T["distribution"],
+    with f2:
 
-                height=330,
-
-                paper_bgcolor="white",
-
-                margin=dict(
-                    l=10,
-                    r=10,
-                    t=55,
-                    b=10
-                ),
-
-                legend=dict(
-                    orientation="h",
-                    y=-0.05
-                )
-            )
-
-            st.plotly_chart(
-                pie,
-                use_container_width=True
-            )
-
-        with chart2:
-
-            breed_risk = (
-                today
-                .groupby("breed")["risk"]
-                .mean()
-                .mul(100)
-                .sort_values()
-            )
-
-            bar = go.Figure(
-                go.Bar(
-
-                    x=breed_risk.values,
-
-                    y=breed_risk.index,
-
-                    orientation="h",
-
-                    marker=dict(
-                        color=BLUE,
-                        line=dict(
-                            width=0
-                        )
-                    ),
-
-                    hovertemplate=
-                    "<b>%{y}</b><br>"
-                    "Average risk: %{x:.1f}%"
-                    "<extra></extra>"
-                )
-            )
-
-            bar.update_layout(
-
-                title=T["breed_risk"],
-
-                height=330,
-
-                paper_bgcolor="white",
-
-                plot_bgcolor="white",
-
-                xaxis=dict(
-                    title="Risk (%)",
-                    gridcolor="#edf2ef"
-                ),
-
-                margin=dict(
-                    l=10,
-                    r=10,
-                    t=55,
-                    b=10
-                )
-            )
-
-            st.plotly_chart(
-                bar,
-                use_container_width=True
-            )
-
-        # ---------------------------------------------------------
-        # ALERT TABLE
-        # ---------------------------------------------------------
-
-        st.markdown(
-            f"""
-            <div class="section-title">
-                🚨 {T["risk_table"]}
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-        maximum = min(
-            50,
-            max(5, len(today))
-        )
-
-        default_rows = min(
-            15,
-            len(today)
-        )
-
-        number_rows = st.slider(
-            T["rows"],
-            5,
-            maximum,
-            default_rows
-        )
-
-        table = today[
-            [
-                "cow_id",
-                "breed",
-                "risk",
-                "band",
-                "yield_l",
-                "conductivity",
-                "scc",
-                "body_temp",
-            ]
-        ].head(number_rows).copy()
-
-        table["Risk"] = (
-            table["risk"] * 100
-        ).round(1).astype(str) + "%"
-
-        table["Risk Level"] = (
-            table["band"]
-            .map(
-                lambda x:
-                f"{BAND_ICON[x]} {x}"
-            )
-        )
-
-        table = table[
-            [
-                "cow_id",
-                "breed",
-                "Risk",
-                "Risk Level",
-                "yield_l",
-                "conductivity",
-                "scc",
-                "body_temp",
-            ]
-        ]
-
-        table.columns = [
-            "Cow ID",
-            "Breed",
-            "Risk",
+        selected_risk = st.selectbox(
             "Risk Level",
-            "Milk Yield (L)",
-            "Conductivity",
-            "SCC",
-            "Body Temp (°C)"
+            ["All", "High", "Medium", "Low"]
+        )
+
+    filtered_df = DF.copy()
+
+    if selected_breed != "All":
+
+        filtered_df = filtered_df[
+            filtered_df["breed_code"] == selected_breed
         ]
 
-        st.dataframe(
-            table,
-            use_container_width=True,
-            hide_index=True,
-            height=430
-        )
+    if selected_risk != "All":
 
-        st.download_button(
-            label=T["download"],
-            data=today.to_csv(
-                index=False
-            ).encode("utf-8"),
+        filtered_df = filtered_df[
+            filtered_df["risk_band"] == selected_risk
+        ]
 
-            file_name=
-            f"MastiWatch_Alerts_Day_{selected_day}.csv",
+    # --------------------------------------------------------
+    # CHARTS
+    # --------------------------------------------------------
 
-            mime="text/csv"
-        )
-
-# =====================================================================
-# TAB 2 — COW INTELLIGENCE
-# =====================================================================
-
-with tab_cow:
-
-    st.markdown(
-        f"""
-        <div class="section-title">
-            🐄 {T["tabs"][1]}
-        </div>
-
-        <div class="section-description">
-            Individual cow risk profile, trends and explainable AI insights.
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    cow_ids = sorted(
-        VIEW["cow_id"].unique()
-    )
-
-    if not cow_ids:
-
-        st.warning(
-            T["no_data"]
-        )
-
-    else:
-
-        default_cow = (
-            int(today.iloc[0]["cow_id"])
-            if len(today)
-            else cow_ids[0]
-        )
-
-        selected_cow = st.selectbox(
-            T["select_cow"],
-            cow_ids,
-            index=cow_ids.index(
-                default_cow
-            )
-        )
-
-        cow_df = (
-            DF[
-                DF["cow_id"] == selected_cow
-            ]
-            .sort_values("day")
-        )
-
-        current = (
-            cow_df[
-                cow_df["day"] <= selected_day
-            ]
-            .tail(1)
-        )
-
-        if current.empty:
-
-            st.warning(
-                T["no_data"]
-            )
-
-        else:
-
-            row = current.iloc[0]
-
-            probability = float(
-                row["risk"]
-            )
-
-            risk_band = get_band(
-                probability,
-                HIGH,
-                MEDIUM
-            )
-
-            left, right = st.columns(
-                [1, 1.7]
-            )
-
-            # -----------------------------------------------------
-            # LEFT
-            # -----------------------------------------------------
-
-            with left:
-
-                st.markdown(
-                    f"""
-                    <div class="cow-profile">
-
-                        <div class="cow-id">
-                            🐄 Cow {selected_cow}
-                        </div>
-
-                        <div class="profile-item">
-                            <strong>Breed:</strong>
-                            {row["breed"]}
-                        </div>
-
-                        <div class="profile-item">
-                            <strong>Calvings:</strong>
-                            {int(row["parity"])}
-                        </div>
-
-                        <div class="profile-item">
-                            <strong>Days in milk:</strong>
-                            {int(row["dim"])}
-                        </div>
-
-                        <div class="profile-item">
-                            <strong>Hygiene score:</strong>
-                            {int(row["hygiene"])}/5
-                        </div>
-
-                        <div class="profile-item">
-                            <strong>Hand milking:</strong>
-                            {"Yes" if row["hand_milking"] else "No"}
-                        </div>
-
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-
-                st.markdown(
-                    f"### {T['risk_title']}"
-                )
-
-                st.plotly_chart(
-                    create_gauge(
-                        probability,
-                        HIGH,
-                        MEDIUM
-                    ),
-                    use_container_width=True
-                )
-
-                badge_class = {
-                    "HIGH": "risk-high",
-                    "MEDIUM": "risk-medium",
-                    "LOW": "risk-low"
-                }[risk_band]
-
-                st.markdown(
-                    f"""
-                    <div style="text-align:center;">
-                        <span class="{badge_class}">
-                            {BAND_ICON[risk_band]}
-                            {risk_band}
-                        </span>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-
-                if risk_band == "HIGH":
-
-                    st.markdown(
-                        f"""
-                        <div class="danger-box">
-                            <strong>⚠ Immediate Attention</strong><br><br>
-                            {T["actions"][risk_band]}
-                        </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
-
-                elif risk_band == "MEDIUM":
-
-                    st.markdown(
-                        f"""
-                        <div class="warning-box">
-                            <strong>⚠ Monitor Closely</strong><br><br>
-                            {T["actions"][risk_band]}
-                        </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
-
-                else:
-
-                    st.markdown(
-                        f"""
-                        <div class="info-box">
-                            <strong>✓ Routine Monitoring</strong><br><br>
-                            {T["actions"][risk_band]}
-                        </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
-
-            # -----------------------------------------------------
-            # RIGHT — EXPLAINABLE AI
-            # -----------------------------------------------------
-
-            with right:
-
-                st.markdown(
-                    f"""
-                    <div class="section-title">
-                        🧠 {T["why"]}
-                    </div>
-
-                    <div class="section-description">
-                        {T["why_description"]}
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-
-                contributions = get_contributions(
-                    model,
-                    FEATURES,
-                    current
-                )
-
-                if contributions is not None:
-
-                    top_features = (
-                        contributions
-                        .reindex(
-                            contributions
-                            .abs()
-                            .sort_values(
-                                ascending=False
-                            )
-                            .index
-                        )
-                        .head(8)
-                        .sort_values()
-                    )
-
-                    feature_names = [
-                        NICE.get(
-                            feature,
-                            feature
-                        )
-                        for feature in
-                        top_features.index
-                    ]
-
-                    colors = [
-                        RED if value > 0
-                        else GREEN
-                        for value in
-                        top_features.values
-                    ]
-
-                    explanation = go.Figure(
-                        go.Bar(
-
-                            x=top_features.values,
-
-                            y=feature_names,
-
-                            orientation="h",
-
-                            marker_color=colors,
-
-                            hovertemplate=
-                            "<b>%{y}</b><br>"
-                            "Contribution: %{x:.3f}"
-                            "<extra></extra>"
-                        )
-                    )
-
-                    explanation.update_layout(
-
-                        height=380,
-
-                        paper_bgcolor="white",
-
-                        plot_bgcolor="white",
-
-                        margin=dict(
-                            l=10,
-                            r=10,
-                            t=15,
-                            b=15
-                        ),
-
-                        xaxis=dict(
-                            title="Contribution to Risk",
-                            gridcolor="#edf2ef"
-                        )
-                    )
-
-                    st.plotly_chart(
-                        explanation,
-                        use_container_width=True
-                    )
-
-                    st.caption(
-                        "🔴 Factors increasing risk   "
-                        "🟢 Factors reducing risk"
-                    )
-
-                else:
-
-                    st.info(
-                        "Explainable AI information is "
-                        "not available for this model."
-                    )
-
-            # -----------------------------------------------------
-            # RISK TREND
-            # -----------------------------------------------------
-
-            st.markdown(
-                f"""
-                <div class="section-title">
-                    📈 {T["trend"]}
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-            st.plotly_chart(
-                create_line_chart(
-                    cow_df,
-                    "risk",
-                    T["risk_trend"],
-                    RED,
-                    selected_day
-                ),
-                use_container_width=True
-            )
-
-            # -----------------------------------------------------
-            # HEALTH TRENDS
-            # -----------------------------------------------------
-
-            t1, t2 = st.columns(2)
-
-            with t1:
-
-                st.plotly_chart(
-                    create_line_chart(
-                        cow_df,
-                        "yield_l",
-                        "🥛 Milk Yield",
-                        BLUE,
-                        selected_day
-                    ),
-                    use_container_width=True
-                )
-
-            with t2:
-
-                st.plotly_chart(
-                    create_line_chart(
-                        cow_df,
-                        "conductivity",
-                        "⚡ Milk Conductivity",
-                        ORANGE,
-                        selected_day
-                    ),
-                    use_container_width=True
-                )
-
-            t3, t4 = st.columns(2)
-
-            with t3:
-
-                st.plotly_chart(
-                    create_line_chart(
-                        cow_df,
-                        "scc",
-                        "🧪 Somatic Cell Count",
-                        RED,
-                        selected_day
-                    ),
-                    use_container_width=True
-                )
-
-            with t4:
-
-                st.plotly_chart(
-                    create_line_chart(
-                        cow_df,
-                        "body_temp",
-                        "🌡 Body Temperature",
-                        GREEN,
-                        selected_day
-                    ),
-                    use_container_width=True
-                )
-
-# =====================================================================
-# TAB 3 — WHAT IF
-# =====================================================================
-
-with tab_whatif:
-
-    st.markdown(
-        f"""
-        <div class="section-title">
-            🧪 {T["what_if"]}
-        </div>
-
-        <div class="section-description">
-            {T["what_if_description"]}
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    ids = sorted(
-        VIEW["cow_id"].unique()
-    )
-
-    if not ids:
-
-        st.warning(
-            T["no_data"]
-        )
-
-    else:
-
-        default_index = (
-            ids.index(
-                int(today.iloc[0]["cow_id"])
-            )
-            if len(today)
-            and int(today.iloc[0]["cow_id"]) in ids
-            else 0
-        )
-
-        whatif_cow = st.selectbox(
-            "🐄 Starting Cow",
-            ids,
-            index=default_index,
-            key="whatif_cow"
-        )
-
-        base_data = (
-            DF[
-                (DF["cow_id"] == whatif_cow)
-                &
-                (DF["day"] <= selected_day)
-            ]
-            .sort_values("day")
-            .tail(1)
-        )
-
-        if base_data.empty:
-
-            st.warning(
-                T["no_data"]
-            )
-
-        else:
-
-            base = base_data.iloc[0]
-
-            st.markdown(
-                "### 🧬 Adjust Health Indicators"
-            )
-
-            s1, s2, s3 = st.columns(3)
-
-            with s1:
-
-                scc_log = st.slider(
-                    "SCC (log scale)",
-                    8.0,
-                    15.0,
-                    float(base["scc_log"]),
-                    0.1
-                )
-
-                scc_dev = st.slider(
-                    "SCC vs Cow Normal",
-                    -1.0,
-                    10.0,
-                    float(
-                        np.clip(
-                            base["scc_dev"],
-                            -1,
-                            10
-                        )
-                    ),
-                    0.1
-                )
-
-            with s2:
-
-                conductivity = st.slider(
-                    "Milk Conductivity",
-                    3.5,
-                    7.5,
-                    float(
-                        base["conductivity"]
-                    ),
-                    0.05
-                )
-
-                conductivity_dev = st.slider(
-                    "Conductivity vs Normal",
-                    -0.5,
-                    0.8,
-                    float(
-                        np.clip(
-                            base["conductivity_dev"],
-                            -0.5,
-                            0.8
-                        )
-                    ),
-                    0.01
-                )
-
-            with s3:
-
-                yield_dev = st.slider(
-                    "Milk Yield vs Normal",
-                    -3.0,
-                    3.0,
-                    float(
-                        np.clip(
-                            base["yield_l_dev"],
-                            -3,
-                            3
-                        )
-                    ),
-                    0.1
-                )
-
-                body_temperature = st.slider(
-                    "Body Temperature",
-                    37.5,
-                    41.0,
-                    float(
-                        np.clip(
-                            base["body_temp"],
-                            37.5,
-                            41
-                        )
-                    ),
-                    0.1
-                )
-
-            s4, s5 = st.columns(2)
-
-            with s4:
-
-                hygiene = st.slider(
-                    "Hygiene Score",
-                    1,
-                    5,
-                    int(base["hygiene"])
-                )
-
-            with s5:
-
-                hand_milking = st.radio(
-                    "Hand Milking",
-                    [0, 1],
-
-                    index=int(
-                        base["hand_milking"]
-                    ),
-
-                    format_func=lambda x:
-                    "Yes" if x else "No",
-
-                    horizontal=True
-                )
-
-            # -----------------------------------------------------
-            # CREATE SIMULATED INPUT
-            # -----------------------------------------------------
-
-            simulated = base_data.copy()
-
-            simulated["scc_log"] = scc_log
-            simulated["scc_dev"] = scc_dev
-
-            simulated["conductivity"] = conductivity
-            simulated["conductivity_dev"] = conductivity_dev
-
-            simulated["yield_l_dev"] = yield_dev
-
-            simulated["body_temp"] = body_temperature
-
-            simulated["hygiene"] = hygiene
-
-            simulated["hand_milking"] = hand_milking
-
-            new_probability = float(
-                model.predict_proba(
-                    simulated[FEATURES]
-                )[:, 1][0]
-            )
-
-            original_probability = float(
-                base["risk"]
-            )
-
-            # -----------------------------------------------------
-            # RESULT
-            # -----------------------------------------------------
-
-            r1, r2, r3 = st.columns(3)
-
-            with r1:
-
-                st.metric(
-                    T["original"],
-                    f"{original_probability * 100:.1f}%"
-                )
-
-            with r2:
-
-                delta = (
-                    new_probability
-                    - original_probability
-                ) * 100
-
-                st.metric(
-                    T["simulated"],
-                    f"{new_probability * 100:.1f}%",
-                    f"{delta:+.1f} pts"
-                )
-
-            with r3:
-
-                new_band = get_band(
-                    new_probability,
-                    HIGH,
-                    MEDIUM
-                )
-
-                st.metric(
-                    "Risk Level",
-                    f"{BAND_ICON[new_band]} {new_band}"
-                )
-
-            if new_band == "HIGH":
-
-                st.error(
-                    T["actions"][new_band]
-                )
-
-            elif new_band == "MEDIUM":
-
-                st.warning(
-                    T["actions"][new_band]
-                )
-
-            else:
-
-                st.success(
-                    T["actions"][new_band]
-                )
-
-# =====================================================================
-# TAB 4 — MODEL PERFORMANCE
-# =====================================================================
-
-with tab_perf:
-
-    st.markdown(
-        f"""
-        <div class="section-title">
-            📊 {T["performance"]}
-        </div>
-
-        <div class="section-description">
-            Demonstration of the model's predictive behaviour.
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    st.warning(
-        "⚠ The model performance shown here is based on "
-        "the project's simulated/demo dataset."
-    )
-
-    y_true = DF["label"]
-
-    scores = DF["risk"]
-
-    predictions = (
-        scores >= MEDIUM
-    ).astype(int)
-
-    tn, fp, fn, tp = confusion_matrix(
-        y_true,
-        predictions
-    ).ravel()
-
-    recall = (
-        tp / (tp + fn)
-        if tp + fn
-        else 0
-    )
-
-    precision = (
-        tp / (tp + fp)
-        if tp + fp
-        else 0
-    )
-
-    auc = roc_auc_score(
-        y_true,
-        scores
-    )
-
-    lead = calculate_lead_time(
-        DF,
-        MEDIUM
-    )
-
-    # -------------------------------------------------------------
-    # METRICS
-    # -------------------------------------------------------------
-
-    p1, p2, p3, p4 = st.columns(4)
-
-    p1.metric(
-        "ROC-AUC",
-        f"{auc:.2f}"
-    )
-
-    p2.metric(
-        "Recall",
-        f"{recall:.0%}"
-    )
-
-    p3.metric(
-        "Precision",
-        f"{precision:.2f}"
-    )
-
-    p4.metric(
-        "Early Warning",
-        f"{lead:.1f} days"
-        if not np.isnan(lead)
-        else "N/A"
-    )
-
-    st.markdown("---")
-
-    # -------------------------------------------------------------
-    # ROC + PR
-    # -------------------------------------------------------------
-
-    c1, c2 = st.columns(2)
-
-    with c1:
-
-        false_positive_rate, true_positive_rate, _ = roc_curve(
-            y_true,
-            scores
-        )
-
-        roc_figure = go.Figure()
-
-        roc_figure.add_trace(
-            go.Scatter(
-                x=false_positive_rate,
-                y=true_positive_rate,
-                mode="lines",
-
-                name="MastiWatch",
-
-                line={
-                    "color": BLUE,
-                    "width": 3
-                }
-            )
-        )
-
-        roc_figure.add_trace(
-            go.Scatter(
-                x=[0, 1],
-                y=[0, 1],
-                mode="lines",
-
-                name="Random",
-
-                line={
-                    "color": "#999",
-                    "dash": "dash"
-                }
-            )
-        )
-
-        roc_figure.update_layout(
-            title="ROC Curve",
-            height=360,
-            paper_bgcolor="white",
-            plot_bgcolor="white",
-            xaxis_title="False Positive Rate",
-            yaxis_title="True Positive Rate",
-            margin=dict(
-                l=20,
-                r=20,
-                t=55,
-                b=20
-            )
-        )
-
-        st.plotly_chart(
-            roc_figure,
-            use_container_width=True
-        )
-
-    with c2:
-
-        precision_values, recall_values, _ = precision_recall_curve(
-            y_true,
-            scores
-        )
-
-        pr_figure = go.Figure()
-
-        pr_figure.add_trace(
-            go.Scatter(
-                x=recall_values,
-                y=precision_values,
-                mode="lines",
-
-                line={
-                    "color": ORANGE,
-                    "width": 3
-                },
-
-                name="MastiWatch"
-            )
-        )
-
-        pr_figure.update_layout(
-            title="Precision-Recall Curve",
-            height=360,
-            paper_bgcolor="white",
-            plot_bgcolor="white",
-            xaxis_title="Recall",
-            yaxis_title="Precision",
-            margin=dict(
-                l=20,
-                r=20,
-                t=55,
-                b=20
-            )
-        )
-
-        st.plotly_chart(
-            pr_figure,
-            use_container_width=True
-        )
-
-    # -------------------------------------------------------------
-    # CONFUSION MATRIX + FEATURE IMPORTANCE
-    # -------------------------------------------------------------
-
-    c3, c4 = st.columns(2)
-
-    with c3:
-
-        confusion = go.Figure(
-            go.Heatmap(
-
-                z=[
-                    [tn, fp],
-                    [fn, tp]
-                ],
-
-                x=[
-                    "Predicted Healthy",
-                    "Predicted At Risk"
-                ],
-
-                y=[
-                    "Actual Healthy",
-                    "Actual At Risk"
-                ],
-
-                text=[
-                    [tn, fp],
-                    [fn, tp]
-                ],
-
-                texttemplate="%{text}",
-
-                colorscale=[
-                    [0, "#e7f6ea"],
-                    [1, "#18794e"]
-                ],
-
-                showscale=False
-            )
-        )
-
-        confusion.update_layout(
-            title="Confusion Matrix",
-            height=360,
-            paper_bgcolor="white",
-            margin=dict(
-                l=20,
-                r=20,
-                t=55,
-                b=20
-            )
-        )
-
-        st.plotly_chart(
-            confusion,
-            use_container_width=True
-        )
-
-    with c4:
-
-        importance = (
-            pd.Series(
-                model.feature_importances_,
-                index=FEATURES
-            )
-            .sort_values()
-            .tail(10)
-        )
-
-        importance_chart = go.Figure(
-            go.Bar(
-
-                x=importance.values,
-
-                y=[
-                    NICE.get(
-                        x,
-                        x
-                    )
-                    for x in importance.index
-                ],
-
-                orientation="h",
-
-                marker_color=BLUE
-            )
-        )
-
-        importance_chart.update_layout(
-            title="Top Model Features",
-            height=360,
-            paper_bgcolor="white",
-            plot_bgcolor="white",
-            margin=dict(
-                l=20,
-                r=20,
-                t=55,
-                b=20
-            )
-        )
-
-        st.plotly_chart(
-            importance_chart,
-            use_container_width=True
-        )
-
-    st.markdown(
-        f"""
-        <div class="warning-box">
-
-        <strong>Research Prototype Notice</strong><br><br>
-
-        The MastiWatch prototype uses simulated data.
-        The performance metrics should not be interpreted as
-        clinical validation. Validation using real farm records
-        and veterinary collaboration is required before
-        real-world deployment.
-
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-# =====================================================================
-# TAB 5 — ABOUT
-# =====================================================================
-
-with tab_about:
-
-    st.markdown(
-        """
-        <div class="section-title">
-            🐄 About MastiWatch
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    col1, col2 = st.columns(
-        [1.4, 1]
-    )
+    col1, col2 = st.columns(2)
 
     with col1:
 
-        st.markdown(
-            """
-            ### What is MastiWatch?
+        risk_counts = filtered_df["risk_band"].value_counts()
 
-            **MastiWatch** is a software-only AI system designed
-            for early forecasting of bovine mastitis.
+        pie_df = pd.DataFrame(
+            {
+                "Risk Level": risk_counts.index,
+                "Cows": risk_counts.values,
+            }
+        )
 
-            Instead of waiting for visible symptoms, the system
-            analyses routinely recorded farm information such as:
+        fig = px.pie(
+            pie_df,
+            names="Risk Level",
+            values="Cows",
+            title="Herd Risk Distribution",
+            hole=0.55,
+        )
 
-            - 🥛 Milk yield
-            - ⚡ Milk conductivity
-            - 🧪 Somatic cell count
-            - 🌡 Temperature
-            - 💧 Humidity
-            - 🐄 Cow characteristics
-            - 🧼 Hygiene information
-            - 🌡 Heat stress indicators
+        fig.update_layout(
+            height=400,
+            margin=dict(l=10, r=10, t=50, b=10),
+        )
 
-            The system uses an **XGBoost machine-learning model**
-            to estimate mastitis risk and provides an
-            explainable AI view of why a cow has been flagged.
-
-            ### AI Pipeline
-
-            **Farm Data → Feature Engineering → XGBoost →
-            Risk Score → Explainable AI → Dashboard**
-
-            ### Core Technologies
-
-            **Python · Pandas · Scikit-learn · XGBoost ·
-            Plotly · Streamlit**
-            """,
+        st.plotly_chart(
+            fig,
+            use_container_width=True
         )
 
     with col2:
 
-        st.markdown(
-            """
-            ### 🎯 Project Goal
+        if "breed_code" in filtered_df.columns:
 
-            Detect risk early so farmers and veterinary
-            professionals can prioritise cows that need
-            attention.
+            breed_risk = (
+                filtered_df
+                .groupby("breed_code")["risk"]
+                .mean()
+                .reset_index()
+                .sort_values("risk", ascending=False)
+            )
 
-            ### 🌱 Expected Impact
+            breed_risk["risk_percent"] = (
+                breed_risk["risk"] * 100
+            )
 
-            **Less Milk Loss**
+            fig = px.bar(
+                breed_risk,
+                x="breed_code",
+                y="risk_percent",
+                title="Average Risk by Breed",
+                labels={
+                    "breed_code": "Breed",
+                    "risk_percent": "Risk (%)",
+                },
+            )
 
-            Earlier intervention may reduce production loss.
+            fig.update_layout(
+                height=400,
+                margin=dict(l=10, r=10, t=50, b=10),
+            )
 
-            **Healthier Cows**
+            st.plotly_chart(
+                fig,
+                use_container_width=True
+            )
 
-            Risk-based monitoring can help identify
-            potentially affected cows earlier.
-
-            **Smarter Treatment**
-
-            Supports targeted veterinary attention.
-
-            **Scalable**
-
-            Software-based architecture can be adapted
-            for farms and cooperatives.
-
-            ### 🇮🇳 Built for India
-
-            The project considers:
-
-            - Heat stress
-            - Breed differences
-            - Hand milking
-            - Hygiene
-            - English / Tamil usability
-            """
-        )
-
-    st.markdown("---")
+    # --------------------------------------------------------
+    # PRIORITY COWS
+    # --------------------------------------------------------
 
     st.markdown(
-        """
-        ### 👥 Team Med Sphere
+        "### 🚨 Priority Cows"
+    )
 
-        **PSNA College of Engineering and Technology**
+    priority = (
+        filtered_df
+        .sort_values("risk", ascending=False)
+        .head(15)
+        .copy()
+    )
 
-        Asmiyanaseem S  
-        Rakshita M  
-        Sherifa Beevi N  
-        Srirammuthiah C
-        """
+    display_columns = []
+
+    for column in [
+        "cow_id",
+        "id",
+        "cow",
+        "breed_code",
+        "scc",
+        "yield_l",
+        "body_temp",
+        "conductivity",
+    ]:
+
+        if column in priority.columns:
+            display_columns.append(column)
+
+    display_columns.append("risk")
+
+    priority_display = priority[display_columns].copy()
+
+    priority_display["risk"] = (
+        priority_display["risk"] * 100
+    ).round(1)
+
+    priority_display = priority_display.rename(
+        columns={"risk": "Risk (%)"}
+    )
+
+    st.dataframe(
+        priority_display,
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    # --------------------------------------------------------
+    # DOWNLOAD
+    # --------------------------------------------------------
+
+    csv_data = filtered_df.to_csv(
+        index=False
+    ).encode("utf-8")
+
+    st.download_button(
+        label="⬇️ Download Herd Risk Report",
+        data=csv_data,
+        file_name="mastiwatch_herd_risk_report.csv",
+        mime="text/csv",
+    )
+
+
+# ============================================================
+# TAB 2 — COW INTELLIGENCE
+# ============================================================
+
+with tab2:
+
+    st.markdown(
+        '<div class="section-title">Individual Cow Intelligence</div>',
+        unsafe_allow_html=True,
+    )
+
+    # Select cow
+    possible_id_columns = [
+        "cow_id",
+        "id",
+        "cow",
+    ]
+
+    id_column = None
+
+    for col in possible_id_columns:
+
+        if col in DF.columns:
+            id_column = col
+            break
+
+    if id_column is None:
+
+        cow_options = list(DF.index)
+
+        selected_cow = st.selectbox(
+            "Select Cow",
+            cow_options
+        )
+
+        cow = DF.loc[selected_cow]
+
+    else:
+
+        cow_options = (
+            DF[id_column]
+            .dropna()
+            .unique()
+            .tolist()
+        )
+
+        selected_cow = st.selectbox(
+            "Select Cow",
+            cow_options
+        )
+
+        cow = DF[
+            DF[id_column] == selected_cow
+        ].iloc[0]
+
+    risk = float(cow["risk"])
+
+    band = risk_band(
+        risk,
+        high_threshold,
+        medium_threshold
+    )
+
+    css_class = risk_class(
+        risk,
+        high_threshold,
+        medium_threshold
+    )
+
+    col1, col2 = st.columns([1, 1])
+
+    # --------------------------------------------------------
+    # RISK GAUGE
+    # --------------------------------------------------------
+
+    with col1:
+
+        fig = go.Figure(
+            go.Indicator(
+                mode="gauge+number",
+                value=risk * 100,
+                number={
+                    "suffix": "%",
+                    "font": {"size": 38},
+                },
+                title={
+                    "text": "Mastitis Risk"
+                },
+                gauge={
+                    "axis": {
+                        "range": [0, 100]
+                    },
+                    "bar": {
+                        "color": "#166534"
+                    },
+                    "steps": [
+                        {
+                            "range": [0, medium_threshold * 100],
+                            "color": "#dcfce7",
+                        },
+                        {
+                            "range": [
+                                medium_threshold * 100,
+                                high_threshold * 100,
+                            ],
+                            "color": "#fef3c7",
+                        },
+                        {
+                            "range": [
+                                high_threshold * 100,
+                                100,
+                            ],
+                            "color": "#fee2e2",
+                        },
+                    ],
+                },
+            )
+        )
+
+        fig.update_layout(
+            height=350,
+            margin=dict(l=20, r=20, t=70, b=20),
+        )
+
+        st.plotly_chart(
+            fig,
+            use_container_width=True
+        )
+
+    # --------------------------------------------------------
+    # COW DETAILS
+    # --------------------------------------------------------
+
+    with col2:
+
+        st.markdown("### 🐄 Cow Profile")
+
+        st.markdown(
+            f"""
+            <div class="{css_class}">
+                {band} Risk
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        st.write("")
+
+        details = {}
+
+        for col in [
+            "breed_code",
+            "parity",
+            "scc",
+            "conductivity",
+            "yield_l",
+            "body_temp",
+            "humidity",
+            "thi",
+            "hygiene",
+            "hand_milking",
+        ]:
+
+            if col in cow.index:
+
+                value = safe_value(cow, col)
+
+                details[col.replace("_", " ").title()] = value
+
+        if details:
+
+            detail_df = pd.DataFrame(
+                list(details.items()),
+                columns=["Parameter", "Value"],
+            )
+
+            st.dataframe(
+                detail_df,
+                use_container_width=True,
+                hide_index=True,
+            )
+
+    # --------------------------------------------------------
+    # FEATURE CONTRIBUTIONS
+    # --------------------------------------------------------
+
+    st.markdown("### 🧠 AI Risk Drivers")
+
+    contributions = None
+
+    try:
+
+        if hasattr(MODEL, "get_booster"):
+
+            row = cow[FEATURES].to_frame().T
+
+            booster = MODEL.get_booster()
+
+            import xgboost as xgb
+
+            matrix = xgb.DMatrix(
+                row,
+                feature_names=FEATURES
+            )
+
+            values = booster.predict(
+                matrix,
+                pred_contribs=True
+            )[0]
+
+            values = values[:-1]
+
+            contributions = pd.Series(
+                values,
+                index=FEATURES
+            )
+
+    except Exception:
+
+        contributions = None
+
+    if contributions is not None:
+
+        contribution_df = (
+            contributions
+            .sort_values()
+            .tail(10)
+            .reset_index()
+        )
+
+        contribution_df.columns = [
+            "Feature",
+            "Contribution"
+        ]
+
+        fig = px.bar(
+            contribution_df,
+            x="Contribution",
+            y="Feature",
+            orientation="h",
+            title="Top AI Risk Contributors",
+        )
+
+        fig.update_layout(
+            height=450,
+            margin=dict(l=10, r=10, t=50, b=10),
+        )
+
+        st.plotly_chart(
+            fig,
+            use_container_width=True
+        )
+
+    else:
+
+        st.info(
+            "AI feature contribution is unavailable "
+            "for this saved model."
+        )
+
+
+# ============================================================
+# TAB 3 — WHAT IF SIMULATOR
+# ============================================================
+
+with tab3:
+
+    st.markdown(
+        '<div class="section-title">🧪 What-If Risk Simulator</div>',
+        unsafe_allow_html=True,
+    )
+
+    st.info(
+        "Adjust selected cow parameters to explore how "
+        "risk may change. This is a simulation, not a diagnosis."
+    )
+
+    simulator_cow = st.selectbox(
+        "Select a reference cow",
+        cow_options,
+        key="simulator_cow",
+    )
+
+    if id_column is None:
+
+        base_cow = DF.loc[simulator_cow].copy()
+
+    else:
+
+        base_cow = DF[
+            DF[id_column] == simulator_cow
+        ].iloc[0].copy()
+
+    simulation = base_cow[FEATURES].copy()
+
+    # --------------------------------------------------------
+    # SELECT NUMERIC FEATURES
+    # --------------------------------------------------------
+
+    numeric_features = []
+
+    for feature in FEATURES:
+
+        try:
+
+            value = pd.to_numeric(
+                base_cow[feature]
+            )
+
+            if pd.notna(value):
+
+                numeric_features.append(feature)
+
+        except Exception:
+            pass
+
+    editable_features = [
+        feature
+        for feature in [
+            "scc",
+            "conductivity",
+            "yield_l",
+            "body_temp",
+            "humidity",
+            "thi",
+            "hygiene",
+        ]
+        if feature in numeric_features
+    ]
+
+    if not editable_features:
+
+        editable_features = numeric_features[:7]
+
+    st.markdown("### Modify Parameters")
+
+    cols = st.columns(2)
+
+    for i, feature in enumerate(editable_features):
+
+        current_value = float(
+            pd.to_numeric(
+                base_cow[feature]
+            )
+        )
+
+        minimum = current_value * 0.50
+
+        maximum = current_value * 1.50
+
+        if current_value == 0:
+
+            minimum = -1
+            maximum = 1
+
+        with cols[i % 2]:
+
+            new_value = st.number_input(
+                feature.replace("_", " ").title(),
+                value=current_value,
+                min_value=float(minimum),
+                max_value=float(maximum),
+                step=max(
+                    abs(current_value) * 0.01,
+                    0.01
+                ),
+            )
+
+            simulation[feature] = new_value
+
+    # --------------------------------------------------------
+    # SIMULATE
+    # --------------------------------------------------------
+
+    try:
+
+        simulated_probability = float(
+            MODEL.predict_proba(
+                pd.DataFrame(
+                    [simulation],
+                    columns=FEATURES
+                )
+            )[0][1]
+        )
+
+        original_probability = float(
+            MODEL.predict_proba(
+                pd.DataFrame(
+                    [base_cow[FEATURES]],
+                    columns=FEATURES
+                )
+            )[0][1]
+        )
+
+        change = (
+            simulated_probability
+            - original_probability
+        )
+
+        c1, c2, c3 = st.columns(3)
+
+        with c1:
+
+            st.metric(
+                "Original Risk",
+                f"{original_probability * 100:.1f}%"
+            )
+
+        with c2:
+
+            st.metric(
+                "Simulated Risk",
+                f"{simulated_probability * 100:.1f}%"
+            )
+
+        with c3:
+
+            st.metric(
+                "Risk Change",
+                f"{change * 100:+.1f}%"
+            )
+
+        simulated_band = risk_band(
+            simulated_probability,
+            high_threshold,
+            medium_threshold
+        )
+
+        st.markdown(
+            f"""
+            <div class="info-box">
+                <b>Simulation Result:</b>
+                The predicted risk level is
+                <b>{simulated_band}</b>.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    except Exception as e:
+
+        st.error(
+            f"Simulation failed: {e}"
+        )
+
+
+# ============================================================
+# TAB 4 — AI PERFORMANCE
+# ============================================================
+
+with tab4:
+
+    st.markdown(
+        '<div class="section-title">📈 AI Model Performance</div>',
+        unsafe_allow_html=True,
+    )
+
+    st.info(
+        "Performance metrics are calculated only when "
+        "appropriate ground-truth labels are available in the dataset."
+    )
+
+    # --------------------------------------------------------
+    # FIND LABEL COLUMN
+    # --------------------------------------------------------
+
+    label_column = None
+
+    possible_labels = [
+        "label",
+        "target",
+        "mastitis",
+        "mastitis_label",
+        "diagnosis",
+        "y",
+    ]
+
+    for col in possible_labels:
+
+        if col in DF.columns:
+
+            label_column = col
+            break
+
+    if label_column is not None:
+
+        y_true = DF[label_column].copy()
+
+        # Convert common string labels
+        if y_true.dtype == "object":
+
+            mapping = {
+                "yes": 1,
+                "no": 0,
+                "positive": 1,
+                "negative": 0,
+                "mastitis": 1,
+                "healthy": 0,
+                "infected": 1,
+                "normal": 0,
+            }
+
+            y_true = (
+                y_true
+                .astype(str)
+                .str.lower()
+                .map(mapping)
+            )
+
+        y_true = pd.to_numeric(
+            y_true,
+            errors="coerce"
+        )
+
+        valid = y_true.notna()
+
+        y_true = y_true[valid].astype(int)
+
+        y_prob = DF.loc[
+            valid,
+            "risk"
+        ]
+
+        y_pred = (
+            y_prob >= 0.50
+        ).astype(int)
+
+        if len(y_true) > 0 and y_true.nunique() == 2:
+
+            accuracy = accuracy_score(
+                y_true,
+                y_pred
+            )
+
+            precision = precision_score(
+                y_true,
+                y_pred,
+                zero_division=0
+            )
+
+            recall = recall_score(
+                y_true,
+                y_pred,
+                zero_division=0
+            )
+
+            f1 = f1_score(
+                y_true,
+                y_pred,
+                zero_division=0
+            )
+
+            auc = roc_auc_score(
+                y_true,
+                y_prob
+            )
+
+            c1, c2, c3, c4, c5 = st.columns(5)
+
+            with c1:
+                st.metric(
+                    "Accuracy",
+                    f"{accuracy * 100:.1f}%"
+                )
+
+            with c2:
+                st.metric(
+                    "Precision",
+                    f"{precision * 100:.1f}%"
+                )
+
+            with c3:
+                st.metric(
+                    "Recall",
+                    f"{recall * 100:.1f}%"
+                )
+
+            with c4:
+                st.metric(
+                    "F1 Score",
+                    f"{f1 * 100:.1f}%"
+                )
+
+            with c5:
+                st.metric(
+                    "ROC-AUC",
+                    f"{auc:.3f}"
+                )
+
+            # ------------------------------------------------
+            # ROC CURVE
+            # ------------------------------------------------
+
+            fpr, tpr, _ = roc_curve(
+                y_true,
+                y_prob
+            )
+
+            roc_df = pd.DataFrame(
+                {
+                    "False Positive Rate": fpr,
+                    "True Positive Rate": tpr,
+                }
+            )
+
+            fig = px.line(
+                roc_df,
+                x="False Positive Rate",
+                y="True Positive Rate",
+                title=f"ROC Curve — AUC {auc:.3f}",
+            )
+
+            fig.add_shape(
+                type="line",
+                x0=0,
+                y0=0,
+                x1=1,
+                y1=1,
+                line=dict(
+                    dash="dash"
+                ),
+            )
+
+            st.plotly_chart(
+                fig,
+                use_container_width=True
+            )
+
+            # ------------------------------------------------
+            # PRECISION RECALL
+            # ------------------------------------------------
+
+            precision_curve, recall_curve, _ = (
+                precision_recall_curve(
+                    y_true,
+                    y_prob
+                )
+            )
+
+            pr_df = pd.DataFrame(
+                {
+                    "Recall": recall_curve,
+                    "Precision": precision_curve,
+                }
+            )
+
+            fig = px.line(
+                pr_df,
+                x="Recall",
+                y="Precision",
+                title="Precision–Recall Curve",
+            )
+
+            st.plotly_chart(
+                fig,
+                use_container_width=True
+            )
+
+            # ------------------------------------------------
+            # CONFUSION MATRIX
+            # ------------------------------------------------
+
+            cm = confusion_matrix(
+                y_true,
+                y_pred
+            )
+
+            cm_df = pd.DataFrame(
+                cm,
+                index=[
+                    "Actual Healthy",
+                    "Actual Mastitis",
+                ],
+                columns=[
+                    "Predicted Healthy",
+                    "Predicted Mastitis",
+                ],
+            )
+
+            fig = px.imshow(
+                cm_df,
+                text_auto=True,
+                title="Confusion Matrix",
+                labels={
+                    "x": "Prediction",
+                    "y": "Actual",
+                },
+            )
+
+            st.plotly_chart(
+                fig,
+                use_container_width=True
+            )
+
+        else:
+
+            st.warning(
+                "Ground-truth labels are not suitable "
+                "for calculating binary classification metrics."
+            )
+
+    else:
+
+        st.warning(
+            "No ground-truth label column was found in "
+            "`mastitis_features.csv`."
+        )
+
+    # --------------------------------------------------------
+    # FEATURE IMPORTANCE
+    # --------------------------------------------------------
+
+    st.markdown("### 🔍 Feature Importance")
+
+    try:
+
+        if hasattr(MODEL, "feature_importances_"):
+
+            importance = pd.DataFrame(
+                {
+                    "Feature": FEATURES,
+                    "Importance": MODEL.feature_importances_,
+                }
+            ).sort_values(
+                "Importance",
+                ascending=False
+            ).head(15)
+
+            fig = px.bar(
+                importance,
+                x="Importance",
+                y="Feature",
+                orientation="h",
+                title="Top Model Features",
+            )
+
+            fig.update_layout(
+                height=500
+            )
+
+            st.plotly_chart(
+                fig,
+                use_container_width=True
+            )
+
+        else:
+
+            st.info(
+                "Feature importance is not available "
+                "for this model type."
+            )
+
+    except Exception as e:
+
+        st.info(
+            f"Feature importance unavailable: {e}"
+        )
+
+
+# ============================================================
+# TAB 5 — ABOUT
+# ============================================================
+
+with tab5:
+
+    st.markdown(
+        '<div class="section-title">ℹ️ About MastiWatch</div>',
+        unsafe_allow_html=True,
     )
 
     st.markdown(
-        f"""
-        <div class="warning-box">
+        """
+        <div class="info-box">
 
-        <strong>⚠ Important Limitation</strong><br><br>
+        <h3>🐄 What is MastiWatch?</h3>
 
-        {T["demo_note"]}
+        MastiWatch is an AI-based early warning platform
+        designed to identify cows that may be at increased
+        risk of bovine mastitis.
+
+        Instead of waiting until visible clinical symptoms
+        appear, the system analyzes available cow-level
+        and environmental indicators to estimate risk.
 
         </div>
         """,
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
 
-# =====================================================================
-# FOOTER
-# =====================================================================
+    col1, col2 = st.columns(2)
 
-st.markdown(
-    """
-    <div class="footer">
+    with col1:
 
-        <strong>MastiWatch</strong> · AI-Based Early Mastitis Warning System
+        st.markdown("### 🤖 AI Pipeline")
+
+        st.markdown(
+            """
+            **1. Data Collection**
+
+            Cow health, milk quality,
+            environmental and management parameters.
+
+            **2. Feature Engineering**
+
+            Moving averages, changes,
+            deviations and derived indicators.
+
+            **3. Machine Learning**
+
+            XGBoost-based classification model.
+
+            **4. Risk Prediction**
+
+            Each cow receives a probability score.
+
+            **5. Early Warning**
+
+            Cows are grouped into Low,
+            Medium and High risk categories.
+            """
+        )
+
+    with col2:
+
+        st.markdown("### 🚨 Recommended Workflow")
+
+        st.markdown(
+            """
+            **Low Risk**
+
+            Continue routine monitoring.
+
+            **Medium Risk**
+
+            Increase observation and monitoring.
+
+            **High Risk**
+
+            Prioritize the cow for veterinary
+            inspection and appropriate follow-up.
+
+            **Important**
+
+            MastiWatch provides an AI-based
+            risk estimate and does not replace
+            professional veterinary diagnosis.
+            """
+        )
+
+    st.divider()
+
+    st.markdown("### 👩‍💻 Team — Med Sphere")
+
+    team = pd.DataFrame(
+        {
+            "Team Member": [
+                "Asmiyanaseem S",
+                "Rakshita M",
+                "Sherifa Beevi N",
+                "Srirammuthiah C",
+            ],
+            "Institution": [
+                "PSNA College of Engineering and Technology",
+                "PSNA College of Engineering and Technology",
+                "PSNA College of Engineering and Technology",
+                "PSNA College of Engineering and Technology",
+            ],
+        }
+    )
+
+    st.dataframe(
+        team,
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.divider()
+
+    st.markdown(
+        """
+        <div style="text-align:center;padding:20px;color:#6b7280;">
+
+        <b>MastiWatch</b><br>
+        AI-Based Bovine Mastitis Early Warning System<br><br>
+
+        Built for innovation, preventive monitoring
+        and smarter livestock healthcare.
+
         <br><br>
 
-        Team Med Sphere · PSNA College of Engineering and Technology
-        <br>
+        ⚠️ Research Prototype — Not a Medical/Veterinary Diagnostic Tool
 
-        Detect Early · Act Early · Protect Milk Production
-
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
